@@ -1,7 +1,7 @@
 extern crate rocket;
 
-use std::fs::{DirBuilder, File};
-use std::path::{Path, PathBuf};
+use std::fs::{File};
+use std::path::{PathBuf};
 use tokio::select;
 use rocket::fairing::AdHoc;
 use rocket::serde::Deserialize;
@@ -13,7 +13,8 @@ use std::io::Write;
 use rocket::State;
 use tokio::io::AsyncReadExt;
 
-const SECURE_FOLDER_NAME: &str = "secure_private";
+const SECURE_FOLDER_NAME: &str = "secure";
+const PUBLIC_FOLDER_NAME: &str = "public";
 
 declare_logger!([pub] LOG);
 define_error!(crate::LOG, trace, export);
@@ -30,39 +31,27 @@ struct AppConfig {
 
 #[rocket::get("/<path..>")]
 fn get_normal(path: PathBuf) -> Option<File> {
-	if path.starts_with(SECURE_FOLDER_NAME) {
-		return None
-	}
-
-	File::open(path).ok()
+	File::open(PathBuf::from(PUBLIC_FOLDER_NAME).join(path)).ok()
 }
 
 
 #[rocket::get("/<path..>?<password>")]
 fn get_secret(path: PathBuf, password: &str, config: &State<AppConfig>) -> Result<File, String> {
-	if !path.starts_with(SECURE_FOLDER_NAME) {
-		return Err("Password is not needed here".into())
-	}
-
 	if !constant_time_eq::constant_time_eq(password.as_bytes(), config.dev_password.as_bytes()) {
 		return Err("Invalid password".into())
 	}
 
-	File::open(path).map_err(|e| format!("Error opening file: {}", e.to_string()))
+	File::open(PathBuf::from(SECURE_FOLDER_NAME).join(path)).map_err(|e| format!("Error opening file: {}", e.to_string()))
 }
 
 
 #[rocket::put("/<path..>?<password>", data="<data>")]
 fn put_secret(path: PathBuf, data: Vec<u8>, password: &str, config: &State<AppConfig>) -> Result<String, String> {
-	if !path.starts_with(SECURE_FOLDER_NAME) {
-		return Err("Cannot put in this directory".into())
-	}
-
 	if !constant_time_eq::constant_time_eq(password.as_bytes(), config.dev_password.as_bytes()) {
 		return Err("Invalid password".into())
 	}
 
-	File::create(path)
+	File::create(PathBuf::from(SECURE_FOLDER_NAME).join(path))
 		.map_err(|e| format!("Error creating file: {}", e.to_string()))?
 		.write_all(data.as_slice())
 		.map_err(|e| format!("Error writing to file: {}", e.to_string()))?;
@@ -75,19 +64,19 @@ fn put_secret(path: PathBuf, data: Vec<u8>, password: &str, config: &State<AppCo
 async fn main() {
     let stderr_handle = LOG.attach_stderr(default_format, vec![], true);
 
-    let path = Path::new(SECURE_FOLDER_NAME);
-    if path.exists() {
-        if !path.is_dir() {
-            error!("{SECURE_FOLDER_NAME} is not a directory!");
-            bad_exit!();
-        }
-    } else {
-        unwrap_result_or_default_error!(
-            DirBuilder::new()
-                .create(SECURE_FOLDER_NAME),
-            "create secure folder: {}", SECURE_FOLDER_NAME
-        );
-    }
+	let mut had_error = false;
+    if !PathBuf::from(SECURE_FOLDER_NAME).is_dir() {
+		error!("{SECURE_FOLDER_NAME} has not been created, or is not a directory");
+		had_error = true;
+	}
+
+	if !PathBuf::from(PUBLIC_FOLDER_NAME).is_dir() {
+		error!("{PUBLIC_FOLDER_NAME} has not been created, or is not a directory");
+		had_error = true;
+	}
+	if had_error {
+		bad_exit!();
+	}
 
 	let (ready_tx, mut ready_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
 
