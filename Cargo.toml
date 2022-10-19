@@ -1,0 +1,15 @@
+[package]
+name = "mangle_web_engine"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1.19.2" , features = ["rt", "rt-multi-thread", "macros", "net"]}
+rocket = { version = "0.5.0-rc.2" , features = ["tls"]}
+rocket_async_compression = "0.1.1"
+mangle-rust-utils = { path = "../mangle_rust_utils" }
+simple-logger = { path = "../simple_logger" }
+simple-serde = { path = "../simple_serde" , features = ["text"]}
+constant_time_eq = "0.2.4"
