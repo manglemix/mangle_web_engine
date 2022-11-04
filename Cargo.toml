@@ -9,7 +9,7 @@ edition = "2021"
 tokio = { version = "1.19.2" , features = ["rt", "rt-multi-thread", "macros", "net"]}
 rocket = { version = "0.5.0-rc.2" , features = ["tls"]}
 rocket_async_compression = "0.1.1"
-mangle-rust-utils = { path = "../mangle_rust_utils" }
-simple-logger = { path = "../simple_logger" }
-simple-serde = { path = "../simple_serde" , features = ["text"]}
+mangle-rust-utils = { git = "https://github.com/manglemix/mangle_rust_utils" }
+simple-logger = { git = "https://github.com/manglemix/simple_logger" }
+simple-serde = { git = "https://github.com/manglemix/simple_serde" , features = ["text"]}
 constant_time_eq = "0.2.4"

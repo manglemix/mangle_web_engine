@@ -859,6 +859,7 @@ dependencies = [
 [[package]]
 name = "mangle-rust-utils"
 version = "0.1.0"
+source = "git+https://github.com/manglemix/mangle_rust_utils#d6deda2194ee16e6bb49bbc07427ae8f2c1eeb5a"
 dependencies = [
  "async-recursion",
 ]
@@ -1444,6 +1445,7 @@ dependencies = [
 [[package]]
 name = "simple-logger"
 version = "0.1.0"
+source = "git+https://github.com/manglemix/simple_logger#a6fd05f5304e1be774023f1b01d542abb0737c45"
 dependencies = [
  "chrono",
  "colored",
@@ -1453,6 +1455,7 @@ dependencies = [
 [[package]]
 name = "simple-serde"
 version = "0.1.0"
+source = "git+https://github.com/manglemix/simple_serde#fea310a426766be66b6e7011c49533c035af6926"
 
 [[package]]
 name = "slab"
