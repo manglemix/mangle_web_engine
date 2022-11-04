@@ -1,5 +1,5 @@
 [default]
 dev_password = "test123"
 log_path = "errors.log"
-address = "127.0.0.1"
+address = "0.0.0.0"
 port = 80

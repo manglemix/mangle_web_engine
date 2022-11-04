@@ -1,0 +1,7 @@
+if ! [ -d /manglemix_website ]; then
+    echo "Cloning website"
+    git clone https://github.com/manglemix/manglemix_website.git
+    cd manglemix_website
+    mkdir secure
+    cd /
+fi
