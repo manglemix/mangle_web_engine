@@ -5,12 +5,6 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[build]
-target = "x86_64-unknown-linux-musl"
-
-[target.'cfg(target_os = "linux")']
-rustflags = ["-C", "linker=ld.lld", "-C", "relocation-model=static"]
-
 [dependencies]
 tokio = { version = "1.19.2" , features = ["rt", "rt-multi-thread", "macros", "net"]}
 rocket = { version = "0.5.0-rc.2" , features = ["tls"]}
