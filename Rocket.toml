@@ -1,5 +1,0 @@
-[default]
-dev_password = "test123"
-log_path = "errors.log"
-address = "127.0.0.1"
-port = 80
