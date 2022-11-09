@@ -10,12 +10,10 @@ mangle-db-enums = { git = "https://github.com/manglemix/mangle_db_enums.git" }
 mangle-rust-utils = { git = "https://github.com/manglemix/mangle_rust_utils.git" }
 rand = { version = "0.8.5" , features = ["std_rng"] }
 rust-argon2 = "1.0.0"
-tokio = { version = "1.19.2" , features = ["rt", "rt-multi-thread", "macros", "net"]}
 rocket = { version = "0.5.0-rc.2" , features = ["tls"]}
-ed25519-dalek = "1.0.1"
 async-trait = "0.1.56"
 simple-serde = { git = "https://github.com/manglemix/simple_serde.git" , features = ["text", "bin"]}
 rocket_async_compression = "0.1.1"
 simple-logger = { git = "https://github.com/manglemix/simple_logger.git" }
 regex = "1.6.0"
-interprocess = { version = "1.2.1", features = ["tokio_support"] }
+# anyhow = "1.0.66"

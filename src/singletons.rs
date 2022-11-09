@@ -1,29 +1,17 @@
 use std::collections::{HashMap, HashSet};
 use std::mem::replace;
 use std::ops::DerefMut;
-use std::path::PathBuf;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use argon2::{Config as ArgonConfig, Error as ArgonError, hash_encoded};
-use ed25519_dalek::{PublicKey, Signature};
-use mangle_db_enums::MANGLE_DB_SUFFIX;
-use mangle_rust_utils::NestedMap;
+// use ed25519_dalek::{PublicKey, Signature};
 use rand::{CryptoRng, Rng, RngCore, thread_rng};
 use rand::distributions::Alphanumeric;
 use regex::Regex;
-use tokio::spawn;
-use tokio::time::sleep;
+use rocket::tokio::spawn;
+use rocket::tokio::time::sleep;
 use std::sync::{Mutex, RwLock};
-use std::task::{Context, Poll};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::TcpStream;
-
-#[cfg(windows)]
-use tokio::net::windows::named_pipe::{NamedPipeClient as LocalPipe};
-// use windows::LocalPipe;
-
 
 use crate::*;
 
@@ -32,11 +20,11 @@ declare_logger!([pub] FAILED_LOGINS);
 /// The public component of a user credential
 ///
 /// For passwords, it's their hash
-/// For keys, its the public key
+// /// For keys, its the public key
 #[derive(Debug)]
 pub enum Credential {
 	PasswordHash(String),
-	Key(PublicKey),
+	// Key(PublicKey),
 }
 
 
@@ -52,12 +40,12 @@ pub enum LoginResult {
 	NonexistentUser,
 	/// The given credential challenge is not correct
 	BadCredentialChallenge,
-	/// The user cannot be authorized using the given credential challenge.
-	/// ie. Giving a password when the user uses key based verification and vice-versa
-	UnexpectedCredentials,
-	/// The given credential challenge has been used before.
-	/// Only returned on key based verification
-	UsedChallenge,
+	// /// The user cannot be authorized using the given credential challenge.
+	// /// ie. Giving a password when the user uses key based verification and vice-versa
+	// UnexpectedCredentials,
+	// /// The given credential challenge has been used before.
+	// /// Only returned on key based verification
+	// UsedChallenge,
 	/// The given user cannot login right now as their account is being locked out
 	LockedOut
 }
@@ -72,6 +60,7 @@ pub enum Privilege {
 
 pub enum UserCreationError {
 	UsernameInUse,
+	PasswordHasWhitespace,
 	/// Username does not pass the password regex
 	BadPassword,
 	/// Error using argon hashing (pretty rare)
@@ -100,23 +89,15 @@ pub struct Logins {
 	lockout_time: Duration,
 	max_fails: u8,
 	failed_logins: RwLock<HashMap<String, FailedLoginAttempt>>,
-	used_challenges: Mutex<HashSet<String>>,
-	key_challenge_prefix: String,
+	// used_challenges: Mutex<HashSet<String>>,
+	// key_challenge_prefix: String,
 	argon2_config: ArgonConfig<'static>,
 	salt_len: u8,
 	min_username_len: u8,
 	max_username_len: u8,
 	password_regex: Regex,
-	pub(crate) user_home_template_path: PathBuf,
+	// pub(crate) user_home_template_path: PathBuf,
 	tmp_reserved_names: Mutex<HashSet<String>>
-}
-
-
-/// Tracks users that have special abilities
-///
-/// Once the server has started up, no new users can have special abilities
-pub struct SpecialUsers {
-	privileged: HashMap<String, HashSet<Privilege>>
 }
 
 
@@ -126,97 +107,6 @@ pub struct Sessions {
 	session_user_map: RwLock<HashMap<Arc<SessionID>, String>>,
 	sessions: RwLock<HashMap<Arc<SessionID>, SessionData>>,
 	pub(crate) max_session_duration: Duration
-}
-
-
-/// A pipe that can either be local or remote
-pub enum EitherPipe {
-	Local(Pin<Box<LocalPipe>>),
-	Remote(Pin<Box<TcpStream>>)
-}
-
-
-impl EitherPipe {
-	/// Connect to the database through a local pipe
-	///
-	/// Named Pipe on windows, Unix socket on linux
-	fn connect_local(to: &str) -> Result<Self, IOError> {
-		#[cfg(windows)]
-		tokio::net::windows::named_pipe::ClientOptions::new()
-			.open(r"\\.\pipe\".to_string() + to).map(|x| Self::Local(Box::pin(x)))
-	}
-	/// Connect to the database through a TCP socket
-	async fn connect_remote(to: &str) -> Result<Self, IOError> {
-		TcpStream::connect(to).await.map(|x| EitherPipe::Remote(Box::pin(x)))
-	}
-}
-
-
-impl AsyncRead for EitherPipe {
-	fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
-		match self.get_mut() {
-			EitherPipe::Local(x) => x.as_mut().poll_read(cx, buf),
-			EitherPipe::Remote(x) => x.as_mut().poll_read(cx, buf)
-		}
-	}
-}
-
-
-impl AsyncWrite for EitherPipe {
-	fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, IOError>> {
-		match self.get_mut() {
-			EitherPipe::Local(x) => x.as_mut().poll_write(cx, buf),
-			EitherPipe::Remote(x) => x.as_mut().poll_write(cx, buf)
-		}
-	}
-
-	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), IOError>> {
-		match self.get_mut() {
-			EitherPipe::Local(x) => x.as_mut().poll_flush(cx),
-			EitherPipe::Remote(x) => x.as_mut().poll_flush(cx)
-		}
-	}
-
-	fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), IOError>> {
-		match self.get_mut() {
-			EitherPipe::Local(x) => x.as_mut().poll_shutdown(cx),
-			EitherPipe::Remote(x) => x.as_mut().poll_shutdown(cx)
-		}
-	}
-}
-
-
-/// Manages pipes to the database
-pub struct Pipes {
-	free_pipes: Mutex<Vec<EitherPipe>>,
-	bind_addr: String,
-	is_local: bool
-}
-
-
-/// Tracks database read write permissions
-///
-/// Permissions are immutable once the server has started up
-pub struct Permissions {
-	/// Paths that anonymous users can read
-	public_read_paths: NestedMap<String, ()>,
-	/// Paths that specific users can read at
-	user_read_paths: HashMap<String, NestedMap<String, ()>>,
-	/// Paths that specific users can write at
-	user_write_paths: HashMap<String, NestedMap<String, ()>>,
-	/// Paths that all users can read at that are under their home path
-	all_user_home_read_paths: NestedMap<String, ()>,
-	/// Paths that all users can write at that are under their home path
-	all_user_home_write_paths: NestedMap<String, ()>,
-	/// Paths that all users can read at that are not in their home
-	all_user_extern_read_paths: NestedMap<String, ()>,
-	/// Paths that all users can write at that are not in their home
-	all_user_extern_write_paths: NestedMap<String, ()>,
-	/// The parent directory to all user home directories.
-	/// Each element is a name of a directory
-	user_home_parent: Vec<String>,
-	/// The length of user_home_parent
-	user_home_parent_segment_count: usize,
 }
 
 
@@ -261,20 +151,41 @@ impl From<ArgonError> for UserCreationError {
 }
 
 
+#[derive(Debug)]
+pub enum ParseUserPasswordError {
+	MissingPasswordHash{ line: usize, username: String },
+	DuplicateUsername{ line: usize, username: String }
+}
+
+
 impl Logins {
+	pub fn parse_user_password_map(data: String) -> Result<HashMap<String, Credential>, ParseUserPasswordError> {
+		let mut map = HashMap::new();
+		let mut lines = data.split('\n');
+
+		for (i, line) in lines.enumerate() {
+			let mut split = line.split_whitespace();
+			let username = if let Some(x) = split.next() { x } else { continue };
+			let password = split.next().ok_or(ParseUserPasswordError::MissingPasswordHash { line: i, username: username.into() })?;
+
+			if map.insert(username.to_string(), Credential::PasswordHash(password.into())).is_some() {
+				return Err(ParseUserPasswordError::DuplicateUsername { line: i, username: username.into() })
+			}
+		}
+
+		Ok(map)
+	}
+
 	/// Creates a Logins instance that has a separate task that performs occasional cleanups
 	pub fn new(
 		user_cred_map: HashMap<String, Credential>,
 		lockout_time: Duration,
 		max_fails: u8,
-		used_challenges: HashSet<String>,
-		key_challenge_prefix: String,
 		salt_len: u8,
 		min_username_len: u8,
 		max_username_len: u8,
 		cleanup_delay: u32,
 		password_regex: Regex,
-		user_home_template_path: PathBuf
 	) -> Arc<Self> {
 		if max_username_len < min_username_len {
 			panic!("max_username_len is smaller than min_username_len!")
@@ -284,15 +195,12 @@ impl Logins {
 			user_cred_map: RwLock::new(user_cred_map),
 			lockout_time,
 			max_fails,
-			used_challenges: Mutex::new(used_challenges),
 			failed_logins: Default::default(),
-			key_challenge_prefix,
 			argon2_config: Default::default(),
 			salt_len,
 			min_username_len,
 			max_username_len,
 			password_regex,
-			user_home_template_path,
 			tmp_reserved_names: Default::default()
 		});
 
@@ -325,12 +233,21 @@ impl Logins {
 	///
 	/// New users can only be made with a password, not a key
 	pub fn add_user(&self, username: String, password: String) -> Result<UserCreationPromise, UserCreationError> {
-		if username.len() < self.min_username_len as usize || username.len() > self.max_username_len as usize || !username.chars().all(char::is_alphanumeric) {
+		if username.chars().any(char::is_whitespace) {
+			return Err(UserCreationError::PasswordHasWhitespace)
+		}
+
+		if username.len() < self.min_username_len as usize ||
+			username.len() > self.max_username_len as usize ||
+			!username.chars().all(char::is_alphanumeric)
+		{
 			return Err(UserCreationError::BadUsername)
 		}
+
 		if !self.password_regex.is_match(password.as_str()) {
 			return Err(UserCreationError::BadPassword)
 		}
+
 		if self.tmp_reserved_names.lock().unwrap().contains(&username) || self.user_cred_map.read().unwrap().contains_key(&username) {
 			return Err(UserCreationError::UsernameInUse)
 		}
@@ -410,50 +327,33 @@ impl Logins {
 
 					LoginResult::BadCredentialChallenge
 				},
-			Some(Credential::Key(_)) => LoginResult::UnexpectedCredentials,
+			// Some(Credential::Key(_)) => LoginResult::UnexpectedCredentials,
 			None => LoginResult::NonexistentUser
 		}
 	}
 
-	/// Try to login with the given credentials
-	pub fn try_login_key(&self, username: &String, challenge: String, signature: Signature) -> LoginResult {
-		match self.user_cred_map.read().unwrap().get(username) {
-			Some(Credential::PasswordHash(_)) => LoginResult::UnexpectedCredentials,
-			Some(Credential::Key(key)) => {
-				if !challenge.starts_with(&self.key_challenge_prefix) {
-					return LoginResult::BadCredentialChallenge
-				}
+	// /// Try to login with the given credentials
+	// pub fn try_login_key(&self, username: &String, challenge: String, signature: Signature) -> LoginResult {
+	// 	match self.user_cred_map.read().unwrap().get(username) {
+	// 		Some(Credential::PasswordHash(_)) => LoginResult::UnexpectedCredentials,
+	// 		Some(Credential::Key(key)) => {
+	// 			if !challenge.starts_with(&self.key_challenge_prefix) {
+	// 				return LoginResult::BadCredentialChallenge
+	// 			}
 
-				let mut used_challenges = self.used_challenges.lock().unwrap();
-				if used_challenges.contains(&challenge) {
-					LoginResult::UsedChallenge
-				} else if key.verify_strict(challenge.as_bytes(), &signature).is_ok() {
-					used_challenges.insert(challenge);
-					LoginResult::Ok
-				} else {
-					LoginResult::BadCredentialChallenge
-				}
-			}
-			None => LoginResult::NonexistentUser
-		}
-	}
-}
-
-
-impl SpecialUsers {
-	pub fn new(privileged: HashMap<String, HashSet<Privilege>>) -> Self {
-		Self {
-			privileged
-		}
-	}
-	/// Is the given user able to create a user?
-	pub fn can_user_create_user(&self, username: &String) -> bool {
-		if let Some(privileges) = self.privileged.get(username) {
-			privileges.contains(&Privilege::CreateUser)
-		} else {
-			false
-		}
-	}
+	// 			let mut used_challenges = self.used_challenges.lock().unwrap();
+	// 			if used_challenges.contains(&challenge) {
+	// 				LoginResult::UsedChallenge
+	// 			} else if key.verify_strict(challenge.as_bytes(), &signature).is_ok() {
+	// 				used_challenges.insert(challenge);
+	// 				LoginResult::Ok
+	// 			} else {
+	// 				LoginResult::BadCredentialChallenge
+	// 			}
+	// 		}
+	// 		None => LoginResult::NonexistentUser
+	// 	}
+	// }
 }
 
 
@@ -575,147 +475,5 @@ impl Sessions {
 	/// Get the username that owns the given session
 	pub fn get_session_owner(&self, session_id: &SessionID) -> Option<String> {
 		self.session_user_map.read().unwrap().get(session_id).cloned()
-	}
-}
-
-
-impl Pipes {
-	/// Creates a Pipes instance that has a separate task that performs occasional cleanups
-	pub fn new(bind_addr: String, cleanup_delay: u32, is_local: bool) -> Arc<Self> {
-		let out = Arc::new(Self {
-			free_pipes: Default::default(),
-			bind_addr: String::from(MANGLE_DB_SUFFIX) + bind_addr.as_str(),
-			is_local
-		});
-
-		let out_clone = out.clone();
-		spawn(async move {
-			let duration = Duration::from_secs(cleanup_delay as u64);
-			loop {
-				sleep(duration).await;
-				out_clone.prune_pipes();
-			}
-		});
-
-		out
-	}
-
-	/// Take a pipe from self
-	///
-	/// If there are no pipes to take, a new one will be generated
-	pub async fn take_pipe(&self) -> Result<EitherPipe, IOError> {
-		{
-			if let Some(x) = self.free_pipes.lock().unwrap().pop() {
-				return Ok(x)
-			}
-		}
-
-		if self.is_local {
-			EitherPipe::connect_local(self.bind_addr.as_str())
-		} else {
-			EitherPipe::connect_remote(self.bind_addr.as_str()).await
-		}
-	}
-
-	/// Return a pipe to self
-	///
-	/// Do not return if the pipe generated an error while being used
-	pub fn return_pipe(&self, pipe: EitherPipe) {
-		self.free_pipes.lock().unwrap().push(pipe);
-	}
-
-	/// Drop all pipes
-	///
-	/// During periods of high activities, many pipes might be generated.
-	/// After the traffic subsides, some memory will still be allocated to save pipes
-	/// that are no longer needed. Dropping all pipes forces each call to take_pipe to
-	/// create pipes when needed, which will cause the number of pipes to match the new level of traffic
-	fn prune_pipes(&self) {
-		self.free_pipes.lock().unwrap().clear();
-	}
-}
-
-
-impl Permissions {
-	pub fn new(
-		public_read_paths: NestedMap<String, ()>,
-		all_user_home_read_paths: NestedMap<String, ()>,
-		all_user_home_write_paths: NestedMap<String, ()>,
-		all_user_extern_read_paths: NestedMap<String, ()>,
-		all_user_extern_write_paths: NestedMap<String, ()>,
-		user_home_parent: Vec<String>,
-		user_read_paths: HashMap<String, NestedMap<String, ()>>,
-		user_write_paths: HashMap<String, NestedMap<String, ()>>,
-	) -> Self {
-		Self {
-			public_read_paths,
-			user_read_paths,
-			user_write_paths,
-			all_user_home_read_paths,
-			all_user_home_write_paths,
-			all_user_extern_read_paths,
-			all_user_extern_write_paths,
-			user_home_parent_segment_count: user_home_parent.len(),
-			user_home_parent,
-		}
-	}
-
-	/// Can an anonymous user (unauthenticated) read at this location?
-	///
-	/// Anonymous users can never write
-	pub fn can_anonymous_read_here(&self, path: &PathBuf) -> bool {
-		self.public_read_paths.partial_contains(path_buf_to_segments(path))
-	}
-
-	/// Can a user write at this location?
-	pub fn can_user_write_here(&self, username: &String, path: &PathBuf) -> bool {
-		let mut segments = path_buf_to_segments(path);
-
-		if segments.starts_with(self.user_home_parent.as_slice()) {
-			if let Some(user_path) = segments.get(self.user_home_parent_segment_count) {
-				if user_path != username {
-					return false
-				}
-				segments.drain(0..(self.user_home_parent_segment_count + 1));
-				self.all_user_home_write_paths.partial_contains(segments)
-			} else {
-				false
-			}
-		} else if self.all_user_extern_write_paths.partial_contains(segments.clone()) {
-			return true
-		} else {
-			match self.user_write_paths.get(username) {
-				None => false,
-				Some(x) => x.partial_contains(segments)
-			}
-		}
-	}
-
-	/// Can a user read at this location?
-	pub fn can_user_read_here(&self, username: &String, path: &PathBuf) -> bool {
-		let mut segments = path_buf_to_segments(path);
-
-		if self.public_read_paths.partial_contains(segments.iter()) {
-			return true
-		}
-
-		if segments.starts_with(self.user_home_parent.as_slice()) {
-			if let Some(user_path) = segments.get(self.user_home_parent_segment_count) {
-				if user_path != username {
-					return false
-				}
-				segments.drain(0..(self.user_home_parent_segment_count + 1));
-				self.all_user_home_read_paths.partial_contains(segments)
-			} else {
-				false
-			}
-		} else if self.all_user_extern_read_paths.partial_contains(segments.clone()) {
-			return true
-		} else {
-			match self.user_read_paths.get(username) {
-				None => false,
-				Some(x) => x.partial_contains(segments)
-			}
-		}
 	}
 }
