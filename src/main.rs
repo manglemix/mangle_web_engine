@@ -16,24 +16,20 @@ use std::time::Duration;
 use rocket::fairing::AdHoc;
 use rocket::serde::Deserialize;
 use regex::Regex;
+use simple_logger::formatters::default_format;
 use simple_logger::prelude::*;
 
 use methods::auth::{get_session_with_password, make_user, delete_user};
-// use methods::getters::{borrow_resource, directory_tools};
-// use methods::setters::{post_data, put_resource};
-use singletons::{Credential, Logins, Sessions};
+use singletons::{Logins, Sessions};
 
 mod singletons;
-// mod configs;
-// mod parsing;
+mod methods;
 
 
 declare_logger!([pub] LOG);
 define_error!(crate::LOG, trace, export);
 define_info!(crate::LOG, export);
 define_warn!(crate::LOG, export);
-
-mod methods;
 
 
 fn path_buf_to_segments(path: &PathBuf) -> Vec<String> {
@@ -85,11 +81,24 @@ async fn main() {
 	])
 	.attach(AdHoc::config::<AppConfig>())
 	.attach(rocket_async_compression::Compression::fairing())
-	.attach(AdHoc::on_ignite("Build GlobalState", |rocket| async {
-		let config: &AppConfig = rocket.state().unwrap();
-		let config = config.clone();
+	.attach(AdHoc::try_on_ignite("Attach logger", |rocket| async {
+		let config = match rocket.state::<AppConfig>() {
+			Some(x) => x,
+			None => return Err(rocket)
+		};
 
-		rocket.manage(methods::_GlobalState {
+		match LOG.attach_log_file(config.log_path.as_str(), default_format, vec![], true) {
+			Ok(_) => Ok(rocket),
+			Err(_) => Err(rocket)
+		}
+	}))
+	.attach(AdHoc::try_on_ignite("Build GlobalState", |rocket| async {
+		let config = match rocket.state::<AppConfig>() {
+			Some(x) => x,
+			None => return Err(rocket)
+		}.clone();
+
+		Ok(rocket.manage(methods::_GlobalState {
 			logins: Logins::new(
 				user_password_map,
 				Duration::from_secs(config.login_timeout),
@@ -98,10 +107,13 @@ async fn main() {
 				config.min_username_len,
 				config.max_username_len,
 				config.cleanup_delay,
-				unwrap_result_or_default_error!(Regex::new(config.password_regex.as_str()), "parsing password regex"),
+				unwrap_result_or_default_error!(
+					Regex::new(config.password_regex.as_str()),
+					"parsing password regex"
+				),
 			),
 			sessions: Sessions::new(Duration::from_secs(config.max_session_duration), config.cleanup_delay),
-		})
+		}))
 	}));
 
 	let ignited = unwrap_result_or_default_error!(
@@ -118,8 +130,7 @@ async fn main() {
 		() = async {
 			warn!("Listener started up!").wait();
 		} => {},
-	}
-	;
+	};
 
 	warn!("Exit Successful");
 }

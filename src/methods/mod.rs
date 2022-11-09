@@ -11,10 +11,12 @@ pub(super) mod auth;
 
 
 const BUG_MESSAGE: &str = "We encountered a bug on our end. Please try again later";
-const DB_CONNECTION: &str = "We had difficulties connecting to our database. Please try again later";
+// const DB_CONNECTION: &str = "We had difficulties connecting to our database. Please try again later";
 const SESSION_COOKIE_NAME: &str = "Session-ID";
-const MANGLE_DB_CLOSED: &str = "MangleDB has closed the connection";
-const RESOURCE_NOT_FOUND: &str = "Resource not found, or you do not have adequate permissions";
+// const MANGLE_DB_CLOSED: &str = "MangleDB has closed the connection";
+// const RESOURCE_NOT_FOUND: &str = "Resource not found, or you do not have adequate permissions";
+
+use super::*;
 
 
 // macro_rules! write_socket {

@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-mangle-db-enums = { git = "https://github.com/manglemix/mangle_db_enums.git" }
+# mangle-db-enums = { git = "https://github.com/manglemix/mangle_db_enums.git" }
 mangle-rust-utils = { git = "https://github.com/manglemix/mangle_rust_utils.git" }
 rand = { version = "0.8.5" , features = ["std_rng"] }
 rust-argon2 = "1.0.0"

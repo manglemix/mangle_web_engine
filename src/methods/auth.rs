@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 /// These do not interact with the database
 use std::ops::Add;
 use std::time::SystemTime;
-use mangle_db_enums::{GatewayRequestHeader, GatewayResponseHeader, Message};
+// use mangle_db_enums::{GatewayRequestHeader, GatewayResponseHeader, Message};
 
 use rocket::FromForm;
 use rocket::form::Form;
@@ -18,14 +18,23 @@ use crate::singletons::{LoginResult, UserCreationError};
 
 use super::*;
 
+
+#[derive(FromForm)]
+pub struct UserForm {
+	username: String,
+	password: String
+}
+
 /// Try to start a session with a username and password
 ///
 /// If the user has already opened one and it has not expired, it will be returned
-#[rocket::get("/users_with_password?<username>&<password>")]
-pub(crate) async fn get_session_with_password(username: String, password: String, cookies: &CookieJar<'_>, globals: &GlobalState) -> Response {
-	match globals.logins.try_login_password(&username, password) {
+#[rocket::post("/login", data = "<form>")]
+pub(crate) async fn get_session_with_password(form: Form<UserForm>, cookies: &CookieJar<'_>, globals: &GlobalState) -> Response {
+	let form = form.into_inner();
+
+	match globals.logins.try_login_password(&form.username, form.password) {
 		LoginResult::Ok => {
-			let session_id = globals.sessions.create_session(username);
+			let session_id = globals.sessions.create_session(form.username);
 			cookies.add(
 				Cookie::build(SESSION_COOKIE_NAME, session_id.to_string())
 					.expires(OffsetDateTime::from(SystemTime::now().add(globals.sessions.max_session_duration)))
@@ -39,7 +48,6 @@ pub(crate) async fn get_session_with_password(username: String, password: String
 		LoginResult::NonexistentUser => make_response!(Status::Unauthorized, "The given username does not exist"),
 		LoginResult::LockedOut => make_response!(Status::Unauthorized, "You have failed to login too many times"),
 		// LoginResult::UnexpectedCredentials => make_response!(Status::BadRequest, "The user does not support password authentication"),
-		_ => unreachable!()
 	}
 }
 
@@ -73,16 +81,9 @@ pub(crate) async fn get_session_with_password(username: String, password: String
 // }
 
 
-#[derive(FromForm)]
-pub struct MakeUserForm {
-	username: String,
-	password: String
-}
-
-
 /// Tries to create a new user, granted the creating user has appropriate abilities
 #[rocket::post("/create_user_with_password", data = "<form>")]
-pub(crate) async fn make_user(form: Form<MakeUserForm>, cookies: &CookieJar<'_>, globals: &GlobalState) -> Response {
+pub(crate) async fn make_user(form: Form<UserForm>, cookies: &CookieJar<'_>, globals: &GlobalState) -> Response {
 	let form = form.into_inner();
 
 	let promise = match globals.logins.add_user(form.username, form.password) {
