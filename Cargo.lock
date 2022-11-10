@@ -1022,7 +1022,7 @@ dependencies = [
 [[package]]
 name = "mangle-detached-console"
 version = "0.1.0"
-source = "git+https://github.com/manglemix/mangle_detached_console.git#999bb6b69906247d60d939318a1e4820be6ad184"
+source = "git+https://github.com/manglemix/mangle_detached_console.git#529c49e20d2d962fa4f5636e1b629bd0d602c5ec"
 dependencies = [
  "futures",
  "interprocess",

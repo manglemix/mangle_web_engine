@@ -9,7 +9,7 @@ extern crate mangle_rust_utils;
 extern crate rocket;
 
 use rocket::tokio::fs::File;
-use std::io::{Read, ErrorKind};
+use std::io::{Read};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -22,7 +22,7 @@ use simple_logger::prelude::*;
 
 use methods::auth::{get_session_with_password, make_user, delete_user};
 use singletons::{Logins, Sessions};
-use mangle_detached_console::{ConsoleServer, send_message};
+use mangle_detached_console::{ConsoleServer, send_message, ConsoleSendError};
 use clap::{Command};
 
 mod singletons;
@@ -110,13 +110,32 @@ async fn main() {
 	let matches = app.clone().get_matches_from(args.clone());
 
 	match matches.subcommand().unwrap() {
-        ("start", _sub_matches) => {}
+        ("start", _) => match send_message(PIPE_ADDR, args.get(0).unwrap().to_string() + " status").await {
+			Ok(msg) => {
+				eprintln!("A server has already started up. Retrieved their status:\n{msg}");
+				bad_exit!()
+			}
+			Err(e) => match e {
+				ConsoleSendError::NotFound => {
+					// Do nothing and move on, there is no server
+				}
+				e => {
+					default_error!(
+						e,
+						"trying to check if a server has already started up"
+					);
+					bad_exit!()
+				}
+			}
+		}
+
 		_ => {
-			// Still a valid match, but one that should be sent to the server
+			// All subcommands not caught by the match should be sent to the server
 			match send_message(PIPE_ADDR, args.join(" ")).await {
 				Ok(msg) => println!("{msg}"),
-				Err(e) => match e.kind() {
-					ErrorKind::NotFound => eprintln!("Could not issue command. The server may not be running"),
+				Err(e) => match e {
+					ConsoleSendError::NotFound => eprintln!("Could not issue command. The server may not be running"),
+					ConsoleSendError::PermissionDenied => eprintln!("Could not issue command. You may not have adequate permissions"),
 					_ => eprintln!("Faced the following error while trying to issue the command: {e:?}")
 				}
 			}
