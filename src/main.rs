@@ -1,4 +1,5 @@
 #![feature(proc_macro_hygiene, decl_macro)]
+#![feature(option_result_contains)]
 
 /// The user authentication side of mangle db
 ///
@@ -8,8 +9,10 @@
 extern crate mangle_rust_utils;
 extern crate rocket;
 
+use rocket::State;
 use rocket::tokio::fs::File;
 use std::io::{Read};
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -35,6 +38,18 @@ define_info!(crate::LOG, export);
 define_warn!(crate::LOG, export);
 
 
+struct WebIgnore(gitignore::File<'static>);
+
+
+impl Deref for WebIgnore {
+	type Target = gitignore::File<'static>;
+
+	fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+
 #[derive(Deserialize, Clone)]
 #[serde(crate = "rocket::serde")]
 struct AppConfig {
@@ -52,9 +67,21 @@ struct AppConfig {
 
 
 #[rocket::get("/<path>")]
-async fn unlocked_get(mut path: PathBuf) -> Option<(ContentType, File)> {
-	if !path.exists() {
+async fn unlocked_get(mut path: PathBuf, web_ignore: &State<WebIgnore>) -> Option<(ContentType, File)> {
+	if path.file_name().contains(&"Rocket.toml") {
 		return None
+	}
+
+	match web_ignore.is_excluded(path.as_path()) {
+		Ok(false) => {}
+		Ok(true) => return None,
+		Err(e) => {
+			default_error!(
+				e,
+				"checking accessibility of {path:?}"
+			);
+			return None
+		}
 	}
 
 	if path.is_dir() {
@@ -154,7 +181,7 @@ async fn main() {
 			std::fs::File::open("user_password_map.txt"),
 			"opening user_password_map.txt"
 		);
-	
+
 		unwrap_result_or_default_error!(
 			file.read_to_string(&mut data),
 			"reading user_password_map.txt"
@@ -196,7 +223,7 @@ async fn main() {
 	.attach(AdHoc::on_ignite("Build GlobalState", |rocket| async {
 		let config = rocket.state::<AppConfig>().unwrap().clone();
 
-		rocket.manage(methods::_GlobalState {
+		rocket.manage(methods::_AuthState {
 			logins: Logins::new(
 				user_password_map,
 				Duration::from_secs(config.login_timeout),
@@ -213,6 +240,16 @@ async fn main() {
 			sessions: Sessions::new(Duration::from_secs(config.max_session_duration), config.cleanup_delay),
 		})
 	}))
+	.manage(
+		WebIgnore(
+			unwrap_result_or_default_error!(
+				gitignore::File::new(
+					".webignore".as_ref()
+				),
+				"opening .webignore"
+			)
+		)
+	)
 	.attach(AdHoc::on_liftoff("Log On Liftoff", |_| Box::pin(async {
 		warn!("Server started successfully");
 	})));
@@ -279,14 +316,16 @@ async fn main() {
 						error!("Received the following command from client console: {cmd}");
 					}
 				}
-
-				
 			}
 		} => {},
 	};
 
-	warn!("Exit Successful");
 	if let Some(mut event) = final_event {
-		let _ = event.write_all("Server stopped successfully").await;
+		unwrap_result_or_default_error!(
+			event.write_all("Server stopped successfully").await,
+			"writing to final event"
+		);
 	}
+
+	warn!("Exit Successful");
 }

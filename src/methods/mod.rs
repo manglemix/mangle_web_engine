@@ -11,92 +11,10 @@ pub(super) mod auth;
 
 
 const BUG_MESSAGE: &str = "We encountered a bug on our end. Please try again later";
-// const DB_CONNECTION: &str = "We had difficulties connecting to our database. Please try again later";
 const SESSION_COOKIE_NAME: &str = "Session-ID";
-// const MANGLE_DB_CLOSED: &str = "MangleDB has closed the connection";
-// const RESOURCE_NOT_FOUND: &str = "Resource not found, or you do not have adequate permissions";
 
 use super::*;
 
-
-// macro_rules! write_socket {
-//     ($socket: expr, $payload: expr) => {
-// 		write_socket!($socket, $payload, $crate::methods::DB_CONNECTION)
-// 	};
-//     ($socket: expr, $payload: expr, either) => {
-// 		write_socket!($socket, $payload, rocket::Either::Left(DB_CONNECTION))
-// 	};
-//     ($socket: expr, $payload: expr, $server_err_msg: expr) => {
-// 		use tokio::io::AsyncWriteExt;
-// 		match $socket.write_all($payload.to_bytes().as_slice()).await {
-// 			Ok(_) => {}
-// 			Err(e) => {
-// 				use $crate::*;
-// 				default_error!(e, "writing to socket");
-// 				return make_response!(ServerError, $server_err_msg);
-// 			}
-// 		}
-// 	};
-// }
-// macro_rules! read_socket {
-// 	($socket: expr) => {
-// 		read_socket!($socket, $crate::methods::DB_CONNECTION, $crate::methods::BUG_MESSAGE)
-// 	};
-// 	($socket: expr, either) => {
-// 		read_socket!($socket, rocket::Either::Left($crate::methods::DB_CONNECTION), rocket::Either::Left($crate::methods::BUG_MESSAGE))
-// 	};
-//     ($socket: expr, $conn_err_msg: expr, $header_err_msg: expr) => {{
-// 		use tokio::io::AsyncReadExt;
-// 		let mut header_and_size = [0; 5];
-
-// 		match $socket.read_exact(header_and_size.as_mut_slice()).await {
-// 			Ok(0) => {
-// 				use crate::*;
-// 				error!("{}", $crate::methods::MANGLE_DB_CLOSED);
-// 				return make_response!(ServerError, $conn_err_msg)
-// 			}
-// 			Ok(_) => {}
-// 			Err(e) => {
-// 				default_error!(e, "listening to stream");
-// 				return make_response!(ServerError, $conn_err_msg)
-// 			}
-// 		}
-
-// 		let body_size = u32::from_be_bytes([header_and_size[1], header_and_size[2], header_and_size[3], header_and_size[4]]);
-// 		let mut data = vec![0; body_size as usize];
-
-// 		if body_size > 0 {
-// 			match $socket.read_exact(data.as_mut_slice()).await {
-// 				Ok(0) => {
-// 					use crate::*;
-// 					error!("{}", $crate::methods::MANGLE_DB_CLOSED);
-// 					return make_response!(ServerError, $conn_err_msg)
-// 				}
-// 				Ok(_) => {}
-// 				Err(e) => {
-// 					default_error!(e, "listening to stream");
-// 					return make_response!(ServerError, $conn_err_msg)
-// 				}
-// 			}
-
-// 			match mangle_db_enums::Message::new_response(header_and_size[0], data) {
-// 				Ok(x) => x,
-// 				Err(_) => {
-// 					error!("unrecognized_header: {}", header_and_size[0]);
-// 					return make_response!(ServerError, $header_err_msg)
-// 				}
-// 			}
-// 		} else {
-// 			match mangle_db_enums::Message::new_response_header(header_and_size[0]) {
-// 				Ok(x) => x,
-// 				Err(_) => {
-// 					error!("unrecognized_header: {}", header_and_size[0]);
-// 					return make_response!(ServerError, $header_err_msg)
-// 				}
-// 			}
-// 		}
-// 	}};
-// }
 macro_rules! make_response {
 	(ServerError, $reason: expr) => {
 		make_response!(rocket::http::Status::InternalServerError, $reason)
@@ -150,45 +68,18 @@ macro_rules! missing_session {
 		return make_response!(BadRequest, rocket::Either::Left("Missing Session-ID cookie"))
 	};
 }
-// macro_rules! take_pipe {
-//     ($globals: expr) => {
-// 		match $globals.pipes.take_pipe().await {
-// 			Ok(x) => x,
-// 			Err(e) => {
-// 				default_error!(e, "connecting to db");
-// 				return make_response!(ServerError, DB_CONNECTION)
-// 			}
-// 		}
-// 	};
-//     ($globals: expr, either) => {
-// 		match $globals.pipes.take_pipe().await {
-// 			Ok(x) => x,
-// 			Err(e) => {
-// 				default_error!(e, "connecting to db");
-// 				return make_response!(ServerError, Either::Left(DB_CONNECTION))
-// 			}
-// 		}
-// 	};
-// }
 
 use check_session_id;
 use make_response;
 use missing_session;
-// use parse_header;
-// use read_socket;
-// use write_socket;
-// use take_pipe;
 
 type Response = (Status, &'static str);
 
 
-pub(super) struct _GlobalState {
+pub(super) struct _AuthState {
 	pub(super) logins: Arc<Logins>,
 	pub(super) sessions: Arc<Sessions>,
-	// pub(super) pipes: Arc<Pipes>,
-	// pub(super) special_users: SpecialUsers,
-	// pub(super) permissions: Permissions
 }
 
 
-type GlobalState = State<_GlobalState>;
+type AuthState = State<_AuthState>;

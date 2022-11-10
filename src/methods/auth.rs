@@ -7,7 +7,7 @@ use rocket::form::Form;
 use rocket::http::{Cookie, CookieJar};
 use rocket::time::OffsetDateTime;
 
-use crate::methods::GlobalState;
+use crate::methods::AuthState;
 use crate::singletons::{LoginResult, UserCreationError};
 
 use super::*;
@@ -23,7 +23,7 @@ pub struct UserForm {
 ///
 /// If the user has already opened one and it has not expired, it will be returned
 #[rocket::post("/login", data = "<form>")]
-pub(crate) async fn get_session_with_password(form: Form<UserForm>, cookies: &CookieJar<'_>, globals: &GlobalState) -> Response {
+pub(crate) async fn get_session_with_password(form: Form<UserForm>, cookies: &CookieJar<'_>, globals: &AuthState) -> Response {
 	let form = form.into_inner();
 
 	match globals.logins.try_login_password(&form.username, form.password) {
@@ -77,7 +77,7 @@ pub(crate) async fn get_session_with_password(form: Form<UserForm>, cookies: &Co
 
 /// Tries to create a new user, granted the creating user has appropriate abilities
 #[rocket::post("/sign_up", data = "<form>")]
-pub(crate) async fn make_user(form: Form<UserForm>, _cookies: &CookieJar<'_>, globals: &GlobalState) -> Response {
+pub(crate) async fn make_user(form: Form<UserForm>, _cookies: &CookieJar<'_>, globals: &AuthState) -> Response {
 	let form = form.into_inner();
 
 	let promise = match globals.logins.add_user(form.username, form.password) {
@@ -101,7 +101,7 @@ pub(crate) async fn make_user(form: Form<UserForm>, _cookies: &CookieJar<'_>, gl
 
 /// Tries to delete the user that is currently logged in
 #[rocket::post("/delete_my_account")]
-pub(crate) async fn delete_user(cookies: &CookieJar<'_>, globals: &GlobalState) -> Response {
+pub(crate) async fn delete_user(cookies: &CookieJar<'_>, globals: &AuthState) -> Response {
 	let session_id = match check_session_id!(globals.sessions, cookies) {
 		Some(x) => x,
 		None => missing_session!()
