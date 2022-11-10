@@ -50,14 +50,6 @@ pub enum LoginResult {
 	LockedOut
 }
 
-
-/// Special abilities that a user can have
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Privilege {
-	CreateUser
-}
-
-
 pub enum UserCreationError {
 	UsernameInUse,
 	PasswordHasWhitespace,
@@ -161,7 +153,7 @@ pub enum ParseUserPasswordError {
 impl Logins {
 	pub fn parse_user_password_map(data: String) -> Result<HashMap<String, Credential>, ParseUserPasswordError> {
 		let mut map = HashMap::new();
-		let mut lines = data.split('\n');
+		let lines = data.split('\n');
 
 		for (i, line) in lines.enumerate() {
 			let mut split = line.split_whitespace();

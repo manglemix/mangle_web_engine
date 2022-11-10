@@ -1,17 +1,11 @@
-use std::collections::VecDeque;
 /// Methods that involve user authentication
-///
-/// These do not interact with the database
 use std::ops::Add;
 use std::time::SystemTime;
-// use mangle_db_enums::{GatewayRequestHeader, GatewayResponseHeader, Message};
 
 use rocket::FromForm;
 use rocket::form::Form;
 use rocket::http::{Cookie, CookieJar};
-use rocket::response::status::BadRequest;
 use rocket::time::OffsetDateTime;
-use simple_serde::PrimitiveSerializer;
 
 use crate::methods::GlobalState;
 use crate::singletons::{LoginResult, UserCreationError};
@@ -82,8 +76,8 @@ pub(crate) async fn get_session_with_password(form: Form<UserForm>, cookies: &Co
 
 
 /// Tries to create a new user, granted the creating user has appropriate abilities
-#[rocket::post("/create_user_with_password", data = "<form>")]
-pub(crate) async fn make_user(form: Form<UserForm>, cookies: &CookieJar<'_>, globals: &GlobalState) -> Response {
+#[rocket::post("/sign_up", data = "<form>")]
+pub(crate) async fn make_user(form: Form<UserForm>, _cookies: &CookieJar<'_>, globals: &GlobalState) -> Response {
 	let form = form.into_inner();
 
 	let promise = match globals.logins.add_user(form.username, form.password) {
@@ -102,7 +96,7 @@ pub(crate) async fn make_user(form: Form<UserForm>, cookies: &CookieJar<'_>, glo
 
 	promise.finalize();
 
-	todo!()
+	make_response!(Ok, "Sign up successful")
 }
 
 /// Tries to delete the user that is currently logged in
@@ -126,5 +120,6 @@ pub(crate) async fn delete_user(cookies: &CookieJar<'_>, globals: &GlobalState) 
 		None => return make_response!(BadRequest, "User does not exist")
 	};
 
-	todo!()
+	promise.finalize();
+	make_response!(Ok, "User deleted successfully")
 }

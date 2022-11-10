@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-# mangle-db-enums = { git = "https://github.com/manglemix/mangle_db_enums.git" }
+mangle-detached-console = { git = "https://github.com/manglemix/mangle_detached_console.git" }
 mangle-rust-utils = { git = "https://github.com/manglemix/mangle_rust_utils.git" }
 rand = { version = "0.8.5" , features = ["std_rng"] }
 rust-argon2 = "1.0.0"
@@ -16,4 +16,4 @@ simple-serde = { git = "https://github.com/manglemix/simple_serde.git" , feature
 rocket_async_compression = "0.1.1"
 simple-logger = { git = "https://github.com/manglemix/simple_logger.git" }
 regex = "1.6.0"
-# anyhow = "1.0.66"
+clap = "4.0.22"
