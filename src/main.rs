@@ -26,13 +26,10 @@ use simple_logger::prelude::*;
 use methods::auth::{get_session_with_password, make_user, delete_user};
 use singletons::{Logins, Sessions};
 use mangle_detached_console::{ConsoleServer, send_message, ConsoleSendError};
-use clap::{Command, arg};
-
-use crate::mdrender::md_render;
+use clap::{Command};
 
 mod singletons;
 mod methods;
-mod mdrender;
 
 declare_logger!([pub] LOG);
 define_error!(crate::LOG, trace, export);
@@ -155,11 +152,6 @@ async fn main() {
 		.subcommand(
 			Command::new("stop")
 				.about("Stops the currently running server")
-		)
-		.subcommand(
-			Command::new("render")
-				.about("Renders all recognized files into html")
-				.arg(arg!([path] "The directory to start rendering from (default: . )"))
 		);
 	
 	let args: Vec<String> = std::env::args().collect();
@@ -183,20 +175,6 @@ async fn main() {
 					bad_exit!()
 				}
 			}
-		}
-
-		("render", matches) => {
-			let path_str = matches.get_one::<String>("path")
-				.unwrap()
-				.clone();
-			
-			let path = Into::<PathBuf>::into(path_str)
-				.canonicalize()
-				.unwrap();
-
-			md_render(path);
-			println!("Successfully rendered all files!");
-			return
 		}
 
 		_ => {

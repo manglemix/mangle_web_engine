@@ -1,5 +1,7 @@
 FROM rust
 
+EXPOSE 80
+EXPOSE 443
 
 # TODO Add service
 ENV PATH /mangle_web_engine:$PATH
@@ -11,3 +13,6 @@ RUN git clone https://github.com/manglemix/mangle_web_engine.git && \
     cd .. && \
     rm -rf mangle_web_engine && \
     mv tmp mangle_web_engine
+RUN git clone https://github.com/manglemix/manglemix_website.git
+
+WORKDIR /manglemix_website
