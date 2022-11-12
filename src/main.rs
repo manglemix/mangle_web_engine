@@ -11,7 +11,7 @@ extern crate rocket;
 
 use rocket::State;
 use rocket::tokio::fs::File;
-use std::io::{Read};
+use std::fs::read_to_string;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -26,11 +26,13 @@ use simple_logger::prelude::*;
 use methods::auth::{get_session_with_password, make_user, delete_user};
 use singletons::{Logins, Sessions};
 use mangle_detached_console::{ConsoleServer, send_message, ConsoleSendError};
-use clap::{Command};
+use clap::{Command, arg};
+
+use crate::mdrender::md_render;
 
 mod singletons;
 mod methods;
-
+mod mdrender;
 
 declare_logger!([pub] LOG);
 define_error!(crate::LOG, trace, export);
@@ -66,10 +68,15 @@ struct AppConfig {
 }
 
 
-#[rocket::get("/<path>")]
+#[rocket::get("/<path..>")]
 async fn unlocked_get(mut path: PathBuf, web_ignore: &State<WebIgnore>) -> Option<(ContentType, File)> {
-	if path.file_name().contains(&"Rocket.toml") {
-		return None
+	match path.file_name().map(|x| x.to_str()).flatten() {
+		Some("Rocket.toml") => return None,
+		None => return Some((
+			ContentType::HTML,
+			File::open(".cache/index.html").await.ok()?
+		)),
+		_ => {}
 	}
 
 	match web_ignore.is_excluded(path.as_path()) {
@@ -89,6 +96,18 @@ async fn unlocked_get(mut path: PathBuf, web_ignore: &State<WebIgnore>) -> Optio
 	}
 
 	let extension = match path.extension().map(|x| x.to_str()).flatten() {
+		Some("md") => {
+			let file_name = path.file_name().unwrap().to_str().unwrap().to_string();
+			path.pop();
+			path.push(".cache");
+			path.push(file_name);
+			path.set_extension("html");
+
+			return Some((
+				ContentType::HTML,
+				File::open(path).await.ok()?
+			))
+		}
 		Some(x) => x,
 		None => {
 			error!("Tried to access existing file with no extension: {path:?}");
@@ -116,6 +135,11 @@ static PIPE_ADDR: &str = "mangle_web_engine";
 
 #[rocket::main]
 async fn main() {
+	#[cfg(debug_assertions)]
+	LOG.attach_stderr(default_format, vec![], true);
+	#[cfg(not(debug_assertions))]
+	let stderr_handle = LOG.attach_stderr(default_format, vec![], true);
+
 	let app = Command::new("MangleWebEngine")
 		.version(env!("CARGO_PKG_VERSION"))
 		.author("manglemix")
@@ -131,6 +155,11 @@ async fn main() {
 		.subcommand(
 			Command::new("stop")
 				.about("Stops the currently running server")
+		)
+		.subcommand(
+			Command::new("render")
+				.about("Renders all recognized files into html")
+				.arg(arg!([path] "The directory to start rendering from (default: . )"))
 		);
 	
 	let args: Vec<String> = std::env::args().collect();
@@ -156,6 +185,20 @@ async fn main() {
 			}
 		}
 
+		("render", matches) => {
+			let path_str = matches.get_one::<String>("path")
+				.unwrap()
+				.clone();
+			
+			let path = Into::<PathBuf>::into(path_str)
+				.canonicalize()
+				.unwrap();
+
+			md_render(path);
+			println!("Successfully rendered all files!");
+			return
+		}
+
 		_ => {
 			// All subcommands not caught by the match should be sent to the server
 			match send_message(PIPE_ADDR, args.join(" ")).await {
@@ -170,23 +213,10 @@ async fn main() {
 		}
     }
 
-	#[cfg(debug_assertions)]
-	LOG.attach_stderr(default_format, vec![], true);
-	#[cfg(not(debug_assertions))]
-	let stderr_handle = LOG.attach_stderr(default_format, vec![], true);
-
-	let mut data = String::new();
-	{
-		let mut file = unwrap_result_or_default_error!(
-			std::fs::File::open("user_password_map.txt"),
-			"opening user_password_map.txt"
-		);
-
-		unwrap_result_or_default_error!(
-			file.read_to_string(&mut data),
-			"reading user_password_map.txt"
-		);
-	}
+	let data = unwrap_result_or_default_error!(
+		read_to_string("user_password_map.txt"),
+		"reading user_password_map.txt"
+	);
 
 	let user_password_map = unwrap_result_or_default_error!(
 		Logins::parse_user_password_map(data),
