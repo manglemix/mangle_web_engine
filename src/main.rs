@@ -11,7 +11,7 @@ extern crate rocket;
 
 use rocket::State;
 use rocket::tokio::fs::File;
-use std::fs::read_to_string;
+use std::{fs::read_to_string, env::VarError};
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -127,15 +127,19 @@ async fn unlocked_get(mut path: PathBuf, web_ignore: &State<WebIgnore>) -> Optio
 }
 
 
-static PIPE_ADDR: &str = "mangle_web_engine";
-
-
 #[rocket::main]
 async fn main() {
-	#[cfg(debug_assertions)]
-	LOG.attach_stderr(default_format, vec![], true);
-	#[cfg(not(debug_assertions))]
-	let stderr_handle = LOG.attach_stderr(default_format, vec![], true);
+	let pipe_addr = match std::env::var("MANGLE_WEB_PIPE_NAME") {
+		Ok(x) => x,
+		Err(e) => {
+			match e {
+				VarError::NotPresent => eprint!("MANGLE_WEB_PIPE_NAME not set. "),
+				VarError::NotUnicode(_) => eprint!("MANGLE_WEB_PIPE_NAME not unicode. "),
+			}
+			eprintln!("Defaulting to mangle_web_engine");
+			"mangle_web_engine".into()
+		}
+	};
 
 	let app = Command::new("MangleWebEngine")
 		.version(env!("CARGO_PKG_VERSION"))
@@ -158,7 +162,7 @@ async fn main() {
 	let matches = app.clone().get_matches_from(args.clone());
 
 	match matches.subcommand().unwrap() {
-        ("start", _) => match send_message(PIPE_ADDR, args.get(0).unwrap().to_string() + " status").await {
+        ("start", _) => match send_message(pipe_addr.as_str(), args.get(0).unwrap().to_string() + " status").await {
 			Ok(msg) => {
 				eprintln!("A server has already started up. Retrieved their status:\n{msg}");
 				bad_exit!()
@@ -168,9 +172,8 @@ async fn main() {
 					// Do nothing and move on, there is no server
 				}
 				e => {
-					default_error!(
-						e,
-						"trying to check if a server has already started up"
+					eprintln!(
+						"Faced the following error while trying to check if a server has already started up:\n{e:?}"
 					);
 					bad_exit!()
 				}
@@ -179,7 +182,7 @@ async fn main() {
 
 		_ => {
 			// All subcommands not caught by the match should be sent to the server
-			match send_message(PIPE_ADDR, args.join(" ")).await {
+			match send_message(pipe_addr.as_str(), args.join(" ")).await {
 				Ok(msg) => println!("{msg}"),
 				Err(e) => match e {
 					ConsoleSendError::NotFound => eprintln!("Could not issue command. The server may not be running"),
@@ -190,6 +193,11 @@ async fn main() {
 			return
 		}
     }
+	
+	#[cfg(debug_assertions)]
+	LOG.attach_stderr(default_format, vec![], true);
+	#[cfg(not(debug_assertions))]
+	let stderr_handle = LOG.attach_stderr(default_format, vec![], true);
 
 	let data = unwrap_result_or_default_error!(
 		read_to_string("user_password_map.txt"),
@@ -202,65 +210,65 @@ async fn main() {
 	);
 
 	let built = rocket::build()
-	.mount("/", rocket::routes![
-		unlocked_get,
-		get_session_with_password,
-		make_user,
-		delete_user
-	])
-	.attach(AdHoc::config::<AppConfig>())
-	.attach(rocket_async_compression::Compression::fairing())
-	.attach(AdHoc::on_ignite("Attach logger", |rocket| async {
-		let config = rocket.state::<AppConfig>().expect(
-			"There was an error in the configuration file"
-		);
+		.mount("/", rocket::routes![
+			unlocked_get,
+			get_session_with_password,
+			make_user,
+			delete_user
+		])
+		.attach(AdHoc::config::<AppConfig>())
+		.attach(rocket_async_compression::Compression::fairing())
+		.attach(AdHoc::on_ignite("Attach logger", |rocket| async {
+			let config = rocket.state::<AppConfig>().expect(
+				"There was an error in the configuration file"
+			);
 
-		unwrap_result_or_default_error!(
-			singletons::FAILED_LOGINS
-				.attach_log_file(config.failed_logins_path.as_str(), default_format, vec![], true),
-			"opening the failed logins file"
-		);
-
-		unwrap_result_or_default_error!(
-			LOG.attach_log_file(config.log_path.as_str(), default_format, vec![], true),
-			"opening the log file"
-		);
-
-		rocket
-	}))
-	.attach(AdHoc::on_ignite("Build GlobalState", |rocket| async {
-		let config = rocket.state::<AppConfig>().unwrap().clone();
-
-		rocket.manage(methods::_AuthState {
-			logins: Logins::new(
-				user_password_map,
-				Duration::from_secs(config.login_timeout),
-				config.max_fails,
-				config.salt_len,
-				config.min_username_len,
-				config.max_username_len,
-				config.cleanup_delay,
-				unwrap_result_or_default_error!(
-					Regex::new(config.password_regex.as_str()),
-					"parsing password regex"
-				),
-			),
-			sessions: Sessions::new(Duration::from_secs(config.max_session_duration), config.cleanup_delay),
-		})
-	}))
-	.manage(
-		WebIgnore(
 			unwrap_result_or_default_error!(
-				gitignore::File::new(
-					".webignore".as_ref()
+				singletons::FAILED_LOGINS
+					.attach_log_file(config.failed_logins_path.as_str(), default_format, vec![], true),
+				"opening the failed logins file"
+			);
+
+			unwrap_result_or_default_error!(
+				LOG.attach_log_file(config.log_path.as_str(), default_format, vec![], true),
+				"opening the log file"
+			);
+
+			rocket
+		}))
+		.attach(AdHoc::on_ignite("Build GlobalState", |rocket| async {
+			let config = rocket.state::<AppConfig>().unwrap().clone();
+
+			rocket.manage(methods::_AuthState {
+				logins: Logins::new(
+					user_password_map,
+					Duration::from_secs(config.login_timeout),
+					config.max_fails,
+					config.salt_len,
+					config.min_username_len,
+					config.max_username_len,
+					config.cleanup_delay,
+					unwrap_result_or_default_error!(
+						Regex::new(config.password_regex.as_str()),
+						"parsing password regex"
+					),
 				),
-				"opening .webignore"
+				sessions: Sessions::new(Duration::from_secs(config.max_session_duration), config.cleanup_delay),
+			})
+		}))
+		.manage(
+			WebIgnore(
+				unwrap_result_or_default_error!(
+					gitignore::File::new(
+						".webignore".as_ref()
+					),
+					"opening .webignore"
+				)
 			)
 		)
-	)
-	.attach(AdHoc::on_liftoff("Log On Liftoff", |_| Box::pin(async {
-		warn!("Server started successfully");
-	})));
+		.attach(AdHoc::on_liftoff("Log On Liftoff", |_| Box::pin(async {
+			warn!("Server started successfully");
+		})));
 
 	let ignited = unwrap_result_or_default_error!(
 		built.ignite().await,
@@ -268,12 +276,13 @@ async fn main() {
 	);
 
 	let mut server = unwrap_result_or_default_error!(
-		ConsoleServer::bind(PIPE_ADDR),
+		ConsoleServer::bind(pipe_addr.as_str()),
 		"starting console server"
 	);
 	
 	#[cfg(not(debug_assertions))]
 	stderr_handle.close();
+	
 	let mut final_event = None;
 
 	rocket::tokio::select! {
