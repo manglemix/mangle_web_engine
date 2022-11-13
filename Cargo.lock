@@ -748,15 +748,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gitignore"
-version = "1.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78aa90e4620c1498ac434c06ba6e521b525794bbdacf085d490cc794b4a2f9a4"
-dependencies = [
- "glob",
-]
-
-[[package]]
 name = "glob"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1031,7 +1022,7 @@ dependencies = [
 [[package]]
 name = "mangle-detached-console"
 version = "0.1.0"
-source = "git+https://github.com/manglemix/mangle_detached_console.git#eb49c0febe8535b326db9dd18dc8f4df04cc806d"
+source = "git+https://github.com/manglemix/mangle_detached_console.git#e181400456287ba2696a3570be0e0419dff48b8e"
 dependencies = [
  "futures",
  "interprocess",
@@ -1052,7 +1043,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "clap",
- "gitignore",
  "mangle-detached-console",
  "mangle-rust-utils",
  "rand",

@@ -11,15 +11,14 @@ extern crate rocket;
 
 use rocket::State;
 use rocket::tokio::fs::File;
-use std::{fs::read_to_string, env::VarError};
-use std::ops::Deref;
+use std::{fs::read_to_string};
 use std::path::PathBuf;
 use std::time::Duration;
 
 use rocket::fairing::AdHoc;
 use rocket::http::ContentType;
 use rocket::serde::Deserialize;
-use regex::Regex;
+use regex::{Regex, RegexSet};
 use simple_logger::formatters::default_format;
 use simple_logger::prelude::*;
 
@@ -35,18 +34,6 @@ declare_logger!([pub] LOG);
 define_error!(crate::LOG, trace, export);
 define_info!(crate::LOG, export);
 define_warn!(crate::LOG, export);
-
-
-struct WebIgnore(gitignore::File<'static>);
-
-
-impl Deref for WebIgnore {
-	type Target = gitignore::File<'static>;
-
-	fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 
 
 #[derive(Deserialize, Clone)]
@@ -66,26 +53,18 @@ struct AppConfig {
 
 
 #[rocket::get("/<path..>")]
-async fn unlocked_get(mut path: PathBuf, web_ignore: &State<WebIgnore>) -> Option<(ContentType, File)> {
+async fn unlocked_get(mut path: PathBuf, web_ignore: &State<RegexSet>) -> Option<(ContentType, File)> {
 	match path.file_name().map(|x| x.to_str()).flatten() {
 		Some("Rocket.toml") => return None,
 		None => return Some((
 			ContentType::HTML,
-			File::open(".cache/index.html").await.ok()?
+			File::open("index.html").await.ok()?
 		)),
 		_ => {}
 	}
 
-	match web_ignore.is_excluded(path.as_path()) {
-		Ok(false) => {}
-		Ok(true) => return None,
-		Err(e) => {
-			default_error!(
-				e,
-				"checking accessibility of {path:?}"
-			);
-			return None
-		}
+	if web_ignore.is_match(path.as_os_str().to_str().unwrap()) {
+		return None
 	}
 
 	if path.is_dir() {
@@ -129,14 +108,10 @@ async fn unlocked_get(mut path: PathBuf, web_ignore: &State<WebIgnore>) -> Optio
 
 #[rocket::main]
 async fn main() {
-	let pipe_addr = match std::env::var("MANGLE_WEB_PIPE_NAME") {
-		Ok(x) => x,
-		Err(e) => {
-			match e {
-				VarError::NotPresent => eprint!("MANGLE_WEB_PIPE_NAME not set. "),
-				VarError::NotUnicode(_) => eprint!("MANGLE_WEB_PIPE_NAME not unicode. "),
-			}
-			eprintln!("Defaulting to mangle_web_engine");
+	let pipe_addr = match std::env::var_os("MANGLE_WEB_PIPE_NAME") {
+		Some(x) => x,
+		None => {
+			eprintln!("MANGLE_WEB_PIPE_NAME not set.\nDefaulting to mangle_web_engine");
 			"mangle_web_engine".into()
 		}
 	};
@@ -162,7 +137,7 @@ async fn main() {
 	let matches = app.clone().get_matches_from(args.clone());
 
 	match matches.subcommand().unwrap() {
-        ("start", _) => match send_message(pipe_addr.as_str(), args.get(0).unwrap().to_string() + " status").await {
+        ("start", _) => match send_message(pipe_addr.as_os_str(), args.get(0).unwrap().to_string() + " status").await {
 			Ok(msg) => {
 				eprintln!("A server has already started up. Retrieved their status:\n{msg}");
 				bad_exit!()
@@ -182,7 +157,7 @@ async fn main() {
 
 		_ => {
 			// All subcommands not caught by the match should be sent to the server
-			match send_message(pipe_addr.as_str(), args.join(" ")).await {
+			match send_message(pipe_addr.as_os_str(), args.join(" ")).await {
 				Ok(msg) => println!("{msg}"),
 				Err(e) => match e {
 					ConsoleSendError::NotFound => eprintln!("Could not issue command. The server may not be running"),
@@ -198,16 +173,6 @@ async fn main() {
 	LOG.attach_stderr(default_format, vec![], true);
 	#[cfg(not(debug_assertions))]
 	let stderr_handle = LOG.attach_stderr(default_format, vec![], true);
-
-	let data = unwrap_result_or_default_error!(
-		read_to_string("user_password_map.txt"),
-		"reading user_password_map.txt"
-	);
-
-	let user_password_map = unwrap_result_or_default_error!(
-		Logins::parse_user_password_map(data),
-		"parsing user_password_map.txt"
-	);
 
 	let built = rocket::build()
 		.mount("/", rocket::routes![
@@ -237,6 +202,16 @@ async fn main() {
 			rocket
 		}))
 		.attach(AdHoc::on_ignite("Build GlobalState", |rocket| async {
+			let data = unwrap_result_or_default_error!(
+				read_to_string("user_password_map.txt"),
+				"reading user_password_map.txt"
+			);
+
+			let user_password_map = unwrap_result_or_default_error!(
+				Logins::parse_user_password_map(data),
+				"parsing user_password_map.txt"
+			);
+
 			let config = rocket.state::<AppConfig>().unwrap().clone();
 
 			rocket.manage(methods::_AuthState {
@@ -256,16 +231,19 @@ async fn main() {
 				sessions: Sessions::new(Duration::from_secs(config.max_session_duration), config.cleanup_delay),
 			})
 		}))
-		.manage(
-			WebIgnore(
-				unwrap_result_or_default_error!(
-					gitignore::File::new(
-						".webignore".as_ref()
-					),
-					"opening .webignore"
-				)
+		.manage({
+			let data = unwrap_result_or_default_error!(
+				read_to_string(".webignore"),
+				"reading .webignore"
+			);
+			unwrap_result_or_default_error!(
+				RegexSet::new(
+					data.split('\n')
+					.filter(|line| !line.trim_start().starts_with('#'))
+				),
+				"parsing .webignore"
 			)
-		)
+		})
 		.attach(AdHoc::on_liftoff("Log On Liftoff", |_| Box::pin(async {
 			warn!("Server started successfully");
 		})));
@@ -276,7 +254,7 @@ async fn main() {
 	);
 
 	let mut server = unwrap_result_or_default_error!(
-		ConsoleServer::bind(pipe_addr.as_str()),
+		ConsoleServer::bind(pipe_addr.as_os_str()),
 		"starting console server"
 	);
 	
@@ -293,7 +271,16 @@ async fn main() {
 		}
 		() = async {
 			loop {
-				let mut event = server.accept().await;
+				let mut event = match server.accept().await {
+					Ok(x) => x,
+					Err(e) => {
+						default_error!(
+							e,
+							"receiving console event"
+						);
+						continue
+					}
+				};
 				let message = event.take_message();
 
 				let matches = match app.clone().try_get_matches_from(message.split_whitespace()) {
