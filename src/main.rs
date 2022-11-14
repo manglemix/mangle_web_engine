@@ -10,7 +10,7 @@ extern crate mangle_rust_utils;
 extern crate rocket;
 
 use rocket::State;
-use rocket::shield::{Hsts, Shield};
+use rocket::shield::{Hsts, Shield, XssFilter, Referrer};
 use rocket::tokio::fs::File;
 use std::{fs::read_to_string};
 use std::path::PathBuf;
@@ -248,6 +248,8 @@ async fn main() {
 		.attach(
 			Shield::default()
 				.enable(Hsts::default())
+				.enable(XssFilter::default())
+				.enable(Referrer::default())
 		);
 
 	let ignited = unwrap_result_or_default_error!(
