@@ -4,7 +4,7 @@ use rocket::http::Status;
 use rocket::State;
 
 pub mod auth;
-
+pub mod blog;
 
 const BUG_MESSAGE: &str = "We encountered a bug on our end. Please try again later";
 const SESSION_COOKIE_NAME: &str = "Session-ID";
