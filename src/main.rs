@@ -38,7 +38,7 @@ mod log {
 	define_info!(crate::log::LOG, export);
 	define_warn!(crate::log::LOG, export);
 
-	pub use {error, info, warn};
+	pub use {error, info};
 }
 
 
@@ -167,8 +167,8 @@ async fn main() {
 	let args: Vec<String> = std::env::args().collect();
 	let matches = app.clone().get_matches_from(args.clone());
 
-	match matches.subcommand().unwrap() {
-        ("start", _) => match send_message(pipe_addr.as_os_str(), args.get(0).unwrap().to_string() + " status").await {
+	match matches.subcommand() {
+        Some(("start", _)) => match send_message(pipe_addr.as_os_str(), args.get(0).unwrap().to_string() + " status").await {
 			Ok(msg) => {
 				eprintln!("A server has already started up. Retrieved their status:\n{msg}");
 				bad_exit!()
@@ -184,6 +184,11 @@ async fn main() {
 					bad_exit!()
 				}
 			}
+		}
+
+		None => {
+			eprintln!("You need to type a command as an argument! Use -h for more information");
+			bad_exit!()
 		}
 
 		_ => {
