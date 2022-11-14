@@ -68,3 +68,64 @@ use make_response;
 use missing_session;
 
 type Response = (Status, &'static str);
+
+
+macro_rules! unwrap_result_or_log {
+	(
+		$res: expr;
+		($($arg: tt)+)
+	) => {
+		unwrap_result_or_log!(
+			$res;
+			($($arg)+)
+			return None;
+		)
+	};
+	(
+		$res: expr;
+		($($arg: tt)+)
+		$($on_err: tt)+
+	) => {
+		match $res {
+			Ok(x) => x,
+			Err(e) => {
+				default_error!(
+					e,
+					$($arg)+
+				);
+				$($on_err)+
+			}
+		}
+	};
+}
+
+use unwrap_result_or_log;
+
+
+macro_rules! unwrap_option_or_log {
+	(
+		$res: expr;
+		($($arg: tt)+)
+	) => {
+		unwrap_option_or_log!(
+			$res;
+			($($arg)+)
+			return None;
+		)
+	};
+	(
+		$res: expr;
+		($($arg: tt)+)
+		$($on_err: tt)+
+	) => {
+		match $res {
+			Some(x) => x,
+			None => {
+				error!($($arg)*);
+				$($on_err)*
+			}
+		}
+	};
+}
+
+use unwrap_option_or_log;

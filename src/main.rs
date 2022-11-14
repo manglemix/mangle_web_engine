@@ -1,5 +1,6 @@
 #![feature(proc_macro_hygiene, decl_macro)]
 #![feature(option_result_contains)]
+#![feature(once_cell)]
 
 /// The user authentication side of mangle db
 ///
@@ -219,10 +220,12 @@ async fn main() {
 			unlocked_get,
 			get_session_with_password,
 			make_user,
-			delete_user
+			delete_user,
 		])
-		.register("/", catchers![not_found])
-		.register("/", catchers![internal_error])
+		.mount("/api", rocket::routes![
+			apps::blog::get_blogs
+		])
+		.register("/", catchers![not_found, internal_error])
 		.attach(AdHoc::config::<AppConfig>())
 		.attach(rocket_async_compression::Compression::fairing())
 		.attach(AdHoc::on_ignite("Attach logger", |rocket| async {
