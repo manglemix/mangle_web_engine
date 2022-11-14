@@ -3,9 +3,7 @@ use std::sync::Arc;
 use rocket::http::Status;
 use rocket::State;
 
-use crate::singletons::{Logins, Sessions};
-
-pub(super) mod auth;
+pub mod auth;
 
 
 const BUG_MESSAGE: &str = "We encountered a bug on our end. Please try again later";
@@ -25,7 +23,7 @@ macro_rules! make_response {
 		make_response!(rocket::http::Status::Ok, $reason)
 	};
 	(BUG) => {
-		make_response!(NotFound, $crate::methods::BUG_MESSAGE)
+		make_response!(NotFound, $crate::apps::BUG_MESSAGE)
 	};
 	(BUG, either) => {
 		make_response!(NotFound, rocket::Either::Left($crate::methods::BUG_MESSAGE))
@@ -43,7 +41,7 @@ macro_rules! check_session_id {
 	};
     ($session: expr, $cookies: expr, $err_msg1: expr, $err_msg2: expr) => {
 		if let Some(cookie) = $cookies.get(SESSION_COOKIE_NAME) {
-			let session_id = match $crate::singletons::SessionID::try_from(cookie.value().to_string()) {
+			let session_id = match $crate::apps::auth::SessionID::try_from(cookie.value().to_string()) {
 				Ok(x) => x,
 				Err(_) => return make_response!(BadRequest, $err_msg1)
 			};
@@ -70,12 +68,3 @@ use make_response;
 use missing_session;
 
 type Response = (Status, &'static str);
-
-
-pub(super) struct _AuthState {
-	pub(super) logins: Arc<Logins>,
-	pub(super) sessions: Arc<Sessions>,
-}
-
-
-type AuthState = State<_AuthState>;

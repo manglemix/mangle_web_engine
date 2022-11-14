@@ -1,18 +1,61 @@
+use std::fs::read_to_string;
 /// Methods that involve user authentication
 use std::ops::Add;
-use std::time::SystemTime;
+use std::time::{SystemTime, Duration};
 
+use regex::Regex;
 use rocket::FromForm;
 use rocket::form::Form;
 use rocket::http::{Cookie, CookieJar};
 use rocket::time::OffsetDateTime;
 use mangle_rust_utils::default_error;
 
-use crate::methods::AuthState;
-use crate::singletons::{LoginResult, UserCreationError};
-use crate::log::*;
+mod singletons;
+
+use singletons::{LoginResult, UserCreationError, Logins, Sessions};
+pub use singletons::{FAILED_LOGINS, SessionID};
+use crate::{log::*, AppConfig};
 
 use super::*;
+
+
+pub struct AuthState {
+	pub logins: Arc<Logins>,
+	pub sessions: Arc<Sessions>,
+}
+
+
+pub(crate) fn make_auth_state(config: &AppConfig) -> AuthState {
+	let data = unwrap_result_or_default_error!(
+		read_to_string("user_password_map.txt"),
+		"reading user_password_map.txt"
+	);
+
+	let user_password_map = unwrap_result_or_default_error!(
+		Logins::parse_user_password_map(data),
+		"parsing user_password_map.txt"
+	);
+
+	AuthState {
+		logins: Logins::new(
+			user_password_map,
+			Duration::from_secs(config.login_timeout),
+			config.max_fails,
+			config.salt_len,
+			config.min_username_len,
+			config.max_username_len,
+			config.cleanup_delay,
+			unwrap_result_or_default_error!(
+				Regex::new(config.password_regex.as_str()),
+				"parsing password regex"
+			),
+		),
+		sessions: Sessions::new(
+			Duration::from_secs(config.max_session_duration),
+			config.cleanup_delay
+		),
+	}
+}
 
 
 #[derive(FromForm)]
@@ -25,7 +68,7 @@ pub struct UserForm {
 ///
 /// If the user has already opened one and it has not expired, it will be returned
 #[rocket::post("/login", data = "<form>")]
-pub(crate) async fn get_session_with_password(form: Form<UserForm>, cookies: &CookieJar<'_>, globals: &AuthState) -> Response {
+pub(crate) async fn get_session_with_password(form: Form<UserForm>, cookies: &CookieJar<'_>, globals: &State<AuthState>) -> Response {
 	let form = form.into_inner();
 
 	match globals.logins.try_login_password(&form.username, form.password) {
@@ -79,7 +122,7 @@ pub(crate) async fn get_session_with_password(form: Form<UserForm>, cookies: &Co
 
 /// Tries to create a new user, granted the creating user has appropriate abilities
 #[rocket::post("/sign_up", data = "<form>")]
-pub(crate) async fn make_user(form: Form<UserForm>, _cookies: &CookieJar<'_>, globals: &AuthState) -> Response {
+pub(crate) async fn make_user(form: Form<UserForm>, _cookies: &CookieJar<'_>, globals: &State<AuthState>) -> Response {
 	let form = form.into_inner();
 
 	let promise = match globals.logins.add_user(form.username, form.password) {
@@ -103,7 +146,7 @@ pub(crate) async fn make_user(form: Form<UserForm>, _cookies: &CookieJar<'_>, gl
 
 /// Tries to delete the user that is currently logged in
 #[rocket::post("/delete_my_account")]
-pub(crate) async fn delete_user(cookies: &CookieJar<'_>, globals: &AuthState) -> Response {
+pub(crate) async fn delete_user(cookies: &CookieJar<'_>, globals: &State<AuthState>) -> Response {
 	let session_id = match check_session_id!(globals.sessions, cookies) {
 		Some(x) => x,
 		None => missing_session!()

@@ -14,21 +14,18 @@ use rocket::shield::{Hsts, Shield, XssFilter, Referrer};
 use rocket::tokio::fs::File;
 use std::{fs::read_to_string};
 use std::path::{PathBuf, Path};
-use std::time::Duration;
 
 use rocket::fairing::AdHoc;
 use rocket::http::ContentType;
 use rocket::serde::Deserialize;
-use regex::{Regex, RegexSet};
+use regex::RegexSet;
 use simple_logger::formatters::default_format;
 
-use methods::auth::{get_session_with_password, make_user, delete_user};
-use singletons::{Logins, Sessions};
+use apps::auth::{get_session_with_password, make_user, delete_user};
 use mangle_detached_console::{ConsoleServer, send_message, ConsoleSendError};
 use clap::Command;
 
-mod singletons;
-mod methods;
+mod apps;
 
 mod log {
 	use simple_logger::prelude::*;
@@ -206,12 +203,12 @@ async fn main() {
     }
 
 	if !AsRef::<Path>::as_ref(NOT_FOUND_PATH).is_file() {
-		eprintln!("{NOT_FOUND_PATH} is not a valid file");
+		eprintln!("ERROR: {NOT_FOUND_PATH} is not a valid file");
 		bad_exit!()
 	}
 
 	if !AsRef::<Path>::as_ref(INTERNAL_ERROR_PATH).is_file() {
-		eprintln!("{INTERNAL_ERROR_PATH} is not a valid file");
+		eprintln!("ERROR: {INTERNAL_ERROR_PATH} is not a valid file");
 		bad_exit!()
 	}
 	
@@ -234,7 +231,7 @@ async fn main() {
 			);
 
 			unwrap_result_or_default_error!(
-				singletons::FAILED_LOGINS
+				apps::auth::FAILED_LOGINS
 					.attach_log_file(config.failed_logins_path.as_str(), default_format, vec![], true),
 				"opening the failed logins file"
 			);
@@ -247,34 +244,8 @@ async fn main() {
 			rocket
 		}))
 		.attach(AdHoc::on_ignite("Build GlobalState", |rocket| async {
-			let data = unwrap_result_or_default_error!(
-				read_to_string("user_password_map.txt"),
-				"reading user_password_map.txt"
-			);
-
-			let user_password_map = unwrap_result_or_default_error!(
-				Logins::parse_user_password_map(data),
-				"parsing user_password_map.txt"
-			);
-
-			let config = rocket.state::<AppConfig>().unwrap().clone();
-
-			rocket.manage(methods::_AuthState {
-				logins: Logins::new(
-					user_password_map,
-					Duration::from_secs(config.login_timeout),
-					config.max_fails,
-					config.salt_len,
-					config.min_username_len,
-					config.max_username_len,
-					config.cleanup_delay,
-					unwrap_result_or_default_error!(
-						Regex::new(config.password_regex.as_str()),
-						"parsing password regex"
-					),
-				),
-				sessions: Sessions::new(Duration::from_secs(config.max_session_duration), config.cleanup_delay),
-			})
+			let state = apps::auth::make_auth_state(rocket.state::<AppConfig>().unwrap());
+			rocket.manage(state)
 		}))
 		.manage({
 			let data = unwrap_result_or_default_error!(
