@@ -10,6 +10,7 @@ extern crate mangle_rust_utils;
 extern crate rocket;
 
 use rocket::State;
+use rocket::shield::{Hsts, Shield};
 use rocket::tokio::fs::File;
 use std::{fs::read_to_string};
 use std::path::PathBuf;
@@ -111,7 +112,7 @@ async fn main() {
 	let pipe_addr = match std::env::var_os("MANGLE_WEB_PIPE_NAME") {
 		Some(x) => x,
 		None => {
-			eprintln!("MANGLE_WEB_PIPE_NAME not set.\nDefaulting to mangle_web_engine");
+			eprintln!("MANGLE_WEB_PIPE_NAME not set. Defaulting to mangle_web_engine");
 			"mangle_web_engine".into()
 		}
 	};
@@ -169,10 +170,7 @@ async fn main() {
 		}
     }
 	
-	#[cfg(debug_assertions)]
 	LOG.attach_stderr(default_format, vec![], true);
-	#[cfg(not(debug_assertions))]
-	let stderr_handle = LOG.attach_stderr(default_format, vec![], true);
 
 	let built = rocket::build()
 		.mount("/", rocket::routes![
@@ -246,7 +244,11 @@ async fn main() {
 		})
 		.attach(AdHoc::on_liftoff("Log On Liftoff", |_| Box::pin(async {
 			warn!("Server started successfully");
-		})));
+		})))
+		.attach(
+			Shield::default()
+				.enable(Hsts::default())
+		);
 
 	let ignited = unwrap_result_or_default_error!(
 		built.ignite().await,
@@ -258,15 +260,13 @@ async fn main() {
 		"starting console server"
 	);
 	
-	#[cfg(not(debug_assertions))]
-	stderr_handle.close();
-	
 	let mut final_event = None;
 
 	rocket::tokio::select! {
 		res = ignited.launch() => {
 			if let Err(e) = res {
 				default_error!(e, "serving http");
+				bad_exit!();
 			}
 		}
 		() = async {
