@@ -6,14 +6,10 @@ use rocket::State;
 use crate::singletons::{Logins, Sessions};
 
 pub(super) mod auth;
-// pub(super) mod getters;
-// pub(super) mod setters;
 
 
 const BUG_MESSAGE: &str = "We encountered a bug on our end. Please try again later";
 const SESSION_COOKIE_NAME: &str = "Session-ID";
-
-use super::*;
 
 macro_rules! make_response {
 	(ServerError, $reason: expr) => {

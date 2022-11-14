@@ -13,7 +13,7 @@ use rocket::tokio::spawn;
 use rocket::tokio::time::sleep;
 use std::sync::{Mutex, RwLock};
 
-use crate::*;
+use simple_logger::declare_logger;
 
 declare_logger!([pub] FAILED_LOGINS);
 

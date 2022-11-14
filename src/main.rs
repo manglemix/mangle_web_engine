@@ -9,11 +9,11 @@
 extern crate mangle_rust_utils;
 extern crate rocket;
 
-use rocket::State;
+use rocket::{State, catchers};
 use rocket::shield::{Hsts, Shield, XssFilter, Referrer};
 use rocket::tokio::fs::File;
 use std::{fs::read_to_string};
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use std::time::Duration;
 
 use rocket::fairing::AdHoc;
@@ -21,20 +21,28 @@ use rocket::http::ContentType;
 use rocket::serde::Deserialize;
 use regex::{Regex, RegexSet};
 use simple_logger::formatters::default_format;
-use simple_logger::prelude::*;
 
 use methods::auth::{get_session_with_password, make_user, delete_user};
 use singletons::{Logins, Sessions};
 use mangle_detached_console::{ConsoleServer, send_message, ConsoleSendError};
-use clap::{Command};
+use clap::Command;
 
 mod singletons;
 mod methods;
 
-declare_logger!([pub] LOG);
-define_error!(crate::LOG, trace, export);
-define_info!(crate::LOG, export);
-define_warn!(crate::LOG, export);
+mod log {
+	use simple_logger::prelude::*;
+
+	declare_logger!([pub] LOG);
+	define_error!(crate::log::LOG, trace, export);
+	define_info!(crate::log::LOG, export);
+	define_warn!(crate::log::LOG, export);
+
+	pub use {error, info, warn};
+}
+
+
+use log::LOG;
 
 
 #[derive(Deserialize, Clone)]
@@ -107,6 +115,28 @@ async fn unlocked_get(mut path: PathBuf, web_ignore: &State<RegexSet>) -> Option
 }
 
 
+const NOT_FOUND_PATH: &str = "errors/404.html";
+const INTERNAL_ERROR_PATH: &str = "errors/500.html";
+
+
+#[rocket::catch(404)]
+async fn not_found() -> (ContentType, File) {
+	(
+		ContentType::HTML,
+		File::open(NOT_FOUND_PATH).await.unwrap()
+	)
+}
+
+
+#[rocket::catch(500)]
+async fn internal_error() -> (ContentType, File) {
+	(
+		ContentType::HTML,
+		File::open(INTERNAL_ERROR_PATH).await.unwrap()
+	)
+}
+
+
 #[rocket::main]
 async fn main() {
 	let pipe_addr = match std::env::var_os("MANGLE_WEB_PIPE_NAME") {
@@ -169,6 +199,16 @@ async fn main() {
 			return
 		}
     }
+
+	if !AsRef::<Path>::as_ref(NOT_FOUND_PATH).is_file() {
+		eprintln!("{NOT_FOUND_PATH} is not a valid file");
+		bad_exit!()
+	}
+
+	if !AsRef::<Path>::as_ref(INTERNAL_ERROR_PATH).is_file() {
+		eprintln!("{INTERNAL_ERROR_PATH} is not a valid file");
+		bad_exit!()
+	}
 	
 	LOG.attach_stderr(default_format, vec![], true);
 
@@ -179,6 +219,8 @@ async fn main() {
 			make_user,
 			delete_user
 		])
+		.register("/", catchers![not_found])
+		.register("/", catchers![internal_error])
 		.attach(AdHoc::config::<AppConfig>())
 		.attach(rocket_async_compression::Compression::fairing())
 		.attach(AdHoc::on_ignite("Attach logger", |rocket| async {

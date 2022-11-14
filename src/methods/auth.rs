@@ -6,9 +6,11 @@ use rocket::FromForm;
 use rocket::form::Form;
 use rocket::http::{Cookie, CookieJar};
 use rocket::time::OffsetDateTime;
+use mangle_rust_utils::default_error;
 
 use crate::methods::AuthState;
 use crate::singletons::{LoginResult, UserCreationError};
+use crate::log::*;
 
 use super::*;
 
