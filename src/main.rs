@@ -1,25 +1,18 @@
 #![feature(proc_macro_hygiene, decl_macro)]
 #![feature(option_result_contains)]
-#![feature(once_cell)]
-
-/// The user authentication side of mangle db
-///
-/// Mainly uses password authentication
+// #![feature(once_cell)]
 
 #[macro_use]
 extern crate mangle_rust_utils;
 extern crate rocket;
 
-use rocket::{State, catchers};
+use rocket::http::Method;
+use rocket::{catchers};
 use rocket::shield::{Hsts, Shield, XssFilter, Referrer};
-use rocket::tokio::fs::File;
-use std::{fs::read_to_string};
-use std::path::{PathBuf, Path};
 
 use rocket::fairing::AdHoc;
-use rocket::http::ContentType;
 use rocket::serde::Deserialize;
-use regex::RegexSet;
+use rocket_cors::{AllowedOrigins, AllowedHeaders};
 use simple_logger::formatters::default_format;
 
 use apps::auth::{get_session_with_password, make_user, delete_user};
@@ -59,79 +52,21 @@ struct AppConfig {
 }
 
 
-#[rocket::get("/<path..>")]
-async fn unlocked_get(mut path: PathBuf, web_ignore: &State<RegexSet>) -> Option<(ContentType, File)> {
-	match path.file_name().map(|x| x.to_str()).flatten() {
-		Some("Rocket.toml") => return None,
-		None => return Some((
-			ContentType::HTML,
-			File::open("index.html").await.ok()?
-		)),
-		_ => {}
-	}
-
-	if web_ignore.is_match(path.as_os_str().to_str().unwrap()) {
-		return None
-	}
-
-	if path.is_dir() {
-		path.push("index.html");
-	}
-
-	let extension = match path.extension().map(|x| x.to_str()).flatten() {
-		Some("md") => {
-			let file_name = path.file_name().unwrap().to_str().unwrap().to_string();
-			path.pop();
-			path.push(".cache");
-			path.push(file_name);
-			path.set_extension("html");
-
-			return Some((
-				ContentType::HTML,
-				File::open(path).await.ok()?
-			))
-		}
-		Some(x) => x,
-		None => {
-			error!("Tried to access existing file with no extension: {path:?}");
-			return None
-		}
-	};
-
-	let content_type = match ContentType::from_extension(extension) {
-		Some(x) => x,
-		None => {
-			error!("Tried to access existing unsupported file: {path:?}");
-			return None
-		}
-	};
-	
-	Some((
-		content_type,
-		File::open(path).await.ok()?
-	))
+#[rocket::catch(404)]
+async fn not_found() -> String {
+	"Not found".into()
 }
 
 
-const NOT_FOUND_PATH: &str = "errors/404.html";
-const INTERNAL_ERROR_PATH: &str = "errors/500.html";
-
-
-#[rocket::catch(404)]
-async fn not_found() -> (ContentType, File) {
-	(
-		ContentType::HTML,
-		File::open(NOT_FOUND_PATH).await.unwrap()
-	)
+#[rocket::catch(403)]
+async fn forbidden() -> String {
+	"Forbidden".into()
 }
 
 
 #[rocket::catch(500)]
-async fn internal_error() -> (ContentType, File) {
-	(
-		ContentType::HTML,
-		File::open(INTERNAL_ERROR_PATH).await.unwrap()
-	)
+async fn internal_error() -> String {
+	"Internal Error".into()
 }
 
 
@@ -145,7 +80,7 @@ async fn main() {
 		}
 	};
 
-	let app = Command::new("MangleWebEngine")
+	let app = Command::new("MangleAPIEngine")
 		.version(env!("CARGO_PKG_VERSION"))
 		.author("manglemix")
 		.about("The software behind manglemix.com")
@@ -202,30 +137,23 @@ async fn main() {
 			return
 		}
     }
-
-	if !AsRef::<Path>::as_ref(NOT_FOUND_PATH).is_file() {
-		eprintln!("ERROR: {NOT_FOUND_PATH} is not a valid file");
-		bad_exit!()
-	}
-
-	if !AsRef::<Path>::as_ref(INTERNAL_ERROR_PATH).is_file() {
-		eprintln!("ERROR: {INTERNAL_ERROR_PATH} is not a valid file");
-		bad_exit!()
-	}
 	
 	LOG.attach_stderr(default_format, vec![], true);
 
+	let allowed_origins = AllowedOrigins::some_exact(&[
+		"https://manglemix.com",
+		#[cfg(debug_assertions)]
+		"http://127.0.0.1:5173"
+	]);
+
 	let built = rocket::build()
 		.mount("/", rocket::routes![
-			unlocked_get,
 			get_session_with_password,
 			make_user,
 			delete_user,
-		])
-		.mount("/api", rocket::routes![
 			apps::blog::get_blogs
 		])
-		.register("/", catchers![not_found, internal_error])
+		.register("/", catchers![not_found, internal_error, forbidden])
 		.attach(AdHoc::config::<AppConfig>())
 		.attach(rocket_async_compression::Compression::fairing())
 		.attach(AdHoc::on_ignite("Attach logger", |rocket| async {
@@ -250,28 +178,24 @@ async fn main() {
 			let state = apps::auth::make_auth_state(rocket.state::<AppConfig>().unwrap());
 			rocket.manage(state)
 		}))
-		.manage({
-			let data = unwrap_result_or_default_error!(
-				read_to_string(".webignore"),
-				"reading .webignore"
-			);
-			unwrap_result_or_default_error!(
-				RegexSet::new(
-					data.split('\n')
-					.filter(|line| !line.trim_start().starts_with('#'))
-				),
-				"parsing .webignore"
-			)
-		})
 		.attach(AdHoc::on_liftoff("Log On Liftoff", |_| Box::pin(async {
 			warn!("Server started successfully");
 		})))
-		.attach(
-			Shield::default()
-				.enable(Hsts::default())
-				.enable(XssFilter::default())
-				.enable(Referrer::default())
-		);
+		.attach(Shield::default()
+			.enable(Hsts::default())
+			.enable(XssFilter::default())
+			.enable(Referrer::default())
+		)
+		.attach(unwrap_result_or_default_error!(
+			rocket_cors::CorsOptions {
+				allowed_origins,
+				allowed_methods: vec![Method::Get].into_iter().map(From::from).collect(),
+				allowed_headers: AllowedHeaders::some(&["Authorization", "Accept"]),
+				allow_credentials: true,
+				..Default::default()
+			}.to_cors(),
+			"setting up CORS"
+		));
 
 	let ignited = unwrap_result_or_default_error!(
 		built.ignite().await,
