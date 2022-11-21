@@ -74,10 +74,7 @@ async fn internal_error() -> String {
 async fn main() {
 	let pipe_addr = match std::env::var_os("MANGLE_WEB_PIPE_NAME") {
 		Some(x) => x,
-		None => {
-			eprintln!("MANGLE_WEB_PIPE_NAME not set. Defaulting to mangle_web_engine");
-			"mangle_web_engine".into()
-		}
+		None => "mangle_web_engine".into()
 	};
 
 	let app = Command::new("MangleAPIEngine")
@@ -147,7 +144,7 @@ async fn main() {
 	]);
 
 	let built = rocket::build()
-		.mount("/", rocket::routes![
+		.mount("/api", rocket::routes![
 			get_session_with_password,
 			make_user,
 			delete_user,

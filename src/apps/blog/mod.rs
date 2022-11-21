@@ -17,6 +17,7 @@ static DATE_REGEX: OnceCell<Regex> = OnceCell::new();
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
 pub struct Blog {
+    #[serde(skip_serializing)]
     id: String,
     title: String,
     date: Option<String>,
