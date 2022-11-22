@@ -6,13 +6,11 @@
 extern crate mangle_rust_utils;
 extern crate rocket;
 
-use rocket::http::Method;
 use rocket::{catchers};
 use rocket::shield::{Hsts, Shield, XssFilter, Referrer};
 
 use rocket::fairing::AdHoc;
 use rocket::serde::Deserialize;
-use rocket_cors::{AllowedOrigins, AllowedHeaders};
 use simple_logger::formatters::default_format;
 
 use apps::auth::{get_session_with_password, make_user, delete_user};
@@ -137,12 +135,6 @@ async fn main() {
 	
 	LOG.attach_stderr(default_format, vec![], true);
 
-	let allowed_origins = AllowedOrigins::some_exact(&[
-		"https://manglemix.com",
-		#[cfg(debug_assertions)]
-		"http://127.0.0.1:5173"
-	]);
-
 	let built = rocket::build()
 		.mount("/api", rocket::routes![
 			get_session_with_password,
@@ -184,13 +176,7 @@ async fn main() {
 			.enable(Referrer::default())
 		)
 		.attach(unwrap_result_or_default_error!(
-			rocket_cors::CorsOptions {
-				allowed_origins,
-				allowed_methods: vec![Method::Get].into_iter().map(From::from).collect(),
-				allowed_headers: AllowedHeaders::some(&["Authorization", "Accept"]),
-				allow_credentials: true,
-				..Default::default()
-			}.to_cors(),
+			rocket_cors::CorsOptions::default().to_cors(),
 			"setting up CORS"
 		));
 
