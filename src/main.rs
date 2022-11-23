@@ -6,11 +6,14 @@
 extern crate mangle_rust_utils;
 extern crate rocket;
 
+use std::fs::read_to_string;
+
 use rocket::{catchers};
 use rocket::shield::{Hsts, Shield, XssFilter, Referrer};
 
 use rocket::fairing::AdHoc;
 use rocket::serde::Deserialize;
+use rocket_cors::CorsOptions;
 use simple_logger::formatters::default_format;
 
 use apps::auth::{get_session_with_password, make_user, delete_user};
@@ -163,7 +166,7 @@ async fn main() {
 
 			rocket
 		}))
-		.attach(AdHoc::on_ignite("Build GlobalState", |rocket| async {
+		.attach(AdHoc::on_ignite("Build Auth State", |rocket| async {
 			let state = apps::auth::make_auth_state(rocket.state::<AppConfig>().unwrap());
 			rocket.manage(state)
 		}))
@@ -176,7 +179,17 @@ async fn main() {
 			.enable(Referrer::default())
 		)
 		.attach(unwrap_result_or_default_error!(
-			rocket_cors::CorsOptions::default().to_cors(),
+			{
+				unwrap_result_or_default_error!(
+					rocket::serde::json::from_str::<CorsOptions>(
+						unwrap_result_or_default_error!(
+							read_to_string("cors.json"),
+							"reading cors.json"
+						).as_str()
+					),
+					"deserializing cors.json"
+				)
+			}.to_cors(),
 			"setting up CORS"
 		));
 
