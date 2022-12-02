@@ -1,58 +1,100 @@
-use std::fs::read_to_string;
-/// Methods that involve user authentication
-use std::ops::Add;
-use std::time::{SystemTime, Duration};
+use std::time::Duration;
 
 use regex::Regex;
-use rocket::FromForm;
+use rocket::{FromForm, async_trait};
 use rocket::form::Form;
-use rocket::http::{Cookie, CookieJar};
-use rocket::time::OffsetDateTime;
+use rocket::request::{FromRequest, Outcome};
 use mangle_rust_utils::default_error;
 
 mod singletons;
 
-use singletons::{LoginResult, UserCreationError, Logins, Sessions};
+use singletons::{Logins, Sessions};
 pub use singletons::{FAILED_LOGINS, SessionID};
 use crate::{log::*, AppConfig};
 
+use self::singletons::{session_id_to_string, PasswordHash};
+
 use super::*;
+
+use rocket_db_pools::{Database, Connection};
+use rocket_db_pools::sqlx::{self, Row};
+
+#[derive(Database)]
+#[database("credentials")]
+pub struct Credentials(sqlx::SqlitePool);
+
+
+pub struct AuthenticatedUser {
+	pub username: String
+}
+
+
+#[async_trait]
+impl<'r> FromRequest<'r> for AuthenticatedUser {
+    type Error = ();
+
+    async fn from_request(request: &'r rocket::Request<'_>) -> rocket::request::Outcome<Self,Self::Error> {
+		let mut iter = request.headers().get("Session-Key");
+
+        let session_id = if let Some(x) = iter.next() {
+			if let Ok(x) = TryInto::<SessionID>::try_into(x.chars().collect::<Vec<char>>()) {
+				x
+			} else {
+				return Outcome::Failure((Status::BadRequest, ()))
+			}
+		} else {
+			return Outcome::Failure((Status::BadRequest, ()))
+		};
+
+		if iter.next().is_some() {
+			return Outcome::Failure((Status::BadRequest, ()))
+		}
+
+		let sessions: &Sessions = request.rocket().state().unwrap();
+
+		if let Some(username) = sessions.get_session_owner(&session_id) {
+			Outcome::Success(Self {
+				username
+			})
+		} else {
+			Outcome::Failure((Status::Unauthorized, ()))
+		}
+    }
+}
 
 
 pub struct AuthState {
-	pub logins: Arc<Logins>,
-	pub sessions: Arc<Sessions>,
+	pub logins: Logins,
+	pub sessions: Sessions,
+}
+
+
+impl AuthState {
+	pub fn run_cleanups(&self) {
+		self.logins.prune_expired();
+		self.sessions.prune_expired();
+	}
 }
 
 
 pub(crate) fn make_auth_state(config: &AppConfig) -> AuthState {
-	let data = unwrap_result_or_default_error!(
-		read_to_string("user_password_map.txt"),
-		"reading user_password_map.txt"
-	);
-
-	let user_password_map = unwrap_result_or_default_error!(
-		Logins::parse_user_password_map(data),
-		"parsing user_password_map.txt"
-	);
-
 	AuthState {
 		logins: Logins::new(
-			user_password_map,
-			Duration::from_secs(config.login_timeout),
+			Duration::from_secs(config.login_timeout as u64),
 			config.max_fails,
 			config.salt_len,
 			config.min_username_len,
 			config.max_username_len,
-			config.cleanup_delay,
+			Duration::from_secs(config.cleanup_interval as u64),
 			unwrap_result_or_default_error!(
 				Regex::new(config.password_regex.as_str()),
 				"parsing password regex"
 			),
+			config.password_hash_length
 		),
 		sessions: Sessions::new(
-			Duration::from_secs(config.max_session_duration),
-			config.cleanup_delay
+			Duration::from_secs(config.max_session_duration as u64),
+			Duration::from_secs(config.cleanup_interval as u64)
 		),
 	}
 }
@@ -68,103 +110,142 @@ pub struct UserForm {
 ///
 /// If the user has already opened one and it has not expired, it will be returned
 #[rocket::post("/login", data = "<form>")]
-pub(crate) async fn get_session_with_password(form: Form<UserForm>, cookies: &CookieJar<'_>, globals: &State<AuthState>) -> Response {
+pub(crate) async fn get_session_with_password(form: Form<UserForm>, mut credentials: Connection<Credentials>, auth: &State<AuthState>) -> Response {
+	auth.run_cleanups();
+
 	let form = form.into_inner();
+	let username = form.username;
+	let logins = &auth.logins;
+	
+	if logins.is_user_locked_out(&username) {
+		return make_response!(Status::Forbidden, "Locked out temporarily".into())
+	}
 
-	match globals.logins.try_login_password(&form.username, form.password) {
-		LoginResult::Ok => {
-			let session_id = globals.sessions.create_session(form.username);
-			cookies.add(
-				Cookie::build(SESSION_COOKIE_NAME, session_id.to_string())
-					.expires(OffsetDateTime::from(SystemTime::now().add(globals.sessions.max_session_duration)))
-					// .secure(true)	TODO Re-implement!
-					.finish()
-			);
-			make_response!(Ok, "Authentication Successful")
+	let password = form.password;
+
+	let row = match sqlx::query("SELECT Salt, Hash FROM PasswordUsers WHERE Username = ?")
+		.bind(username.clone())
+		.fetch_optional(&mut *credentials).await {
+			Ok(Some(x)) => x,
+			Ok(None) => return make_response!(BadRequest, "User does not exist".into()),
+			Err(e) => {
+				default_error!(
+					e,
+					"querying credentials db"
+				);
+				return make_response!(BUG)
+			}
+		};
+	
+	let salt: Vec<u8> = row.get_unchecked("Salt");
+	let hash: Vec<u8> = row.get_unchecked("Hash");
+
+	match logins.verify_password(&password, salt.as_slice(), hash.as_slice()) {
+		Ok(true) => make_response!(Ok, session_id_to_string(auth.sessions.create_session(username))),
+		Ok(false) => {
+			logins.mark_failed_login(username);
+			make_response!(Status::Unauthorized, "".into())
 		}
-
-		LoginResult::BadCredentialChallenge => make_response!(Status::Unauthorized, "The given password is incorrect"),
-		LoginResult::NonexistentUser => make_response!(Status::Unauthorized, "The given username does not exist"),
-		LoginResult::LockedOut => make_response!(Status::Unauthorized, "You have failed to login too many times"),
-		// LoginResult::UnexpectedCredentials => make_response!(Status::BadRequest, "The user does not support password authentication"),
+		Err(e) => {
+			default_error!(
+				e,
+				"verifying password"
+			);
+			make_response!(BUG)
+		}
 	}
 }
 
 
-// /// Try to start a session with a username and signature
-// ///
-// /// If the user has already opened one and it has not expired, it will be returned
-// #[rocket::get("/users_with_key?<username>&<message>&<signature>")]
-// pub(crate) async fn get_session_with_key(username: String, message: String, signature: String, cookies: &CookieJar<'_>, globals: &GlobalState) -> Response {
-// 	let signature = match signature.parse() {
-// 		Ok(x) => x,
-// 		Err(_) => return make_response!(BadRequest, "Invalid signature")
-// 	};
-// 	match globals.logins.try_login_key(&username, message, signature) {
-// 		LoginResult::Ok => {
-// 			let session_id = globals.sessions.create_session(username);
-// 			cookies.add(
-// 				Cookie::build(SESSION_COOKIE_NAME, session_id.to_string())
-// 					.expires(OffsetDateTime::from(SystemTime::now().add(globals.sessions.max_session_duration)))
-// 					.secure(true)
-// 					.finish()
-// 			);
-// 			make_response!(Ok, "Authentication Successful")
-// 		}
-// 		LoginResult::BadCredentialChallenge => make_response!(Status::Unauthorized, "The given signature is incorrect"),
-// 		LoginResult::NonexistentUser => make_response!(Status::Unauthorized, "The given username does not exist"),
-// 		LoginResult::LockedOut => make_response!(Status::Unauthorized, "You have failed to login too many times"),
-// 		LoginResult::UsedChallenge => make_response!(Status::Unauthorized, "The given challenge has been used before"),
-// 		LoginResult::UnexpectedCredentials => make_response!(Status::BadRequest, "The user does not support key based authentication")
-// 	}
-// }
-
-
 /// Tries to create a new user, granted the creating user has appropriate abilities
 #[rocket::post("/sign_up", data = "<form>")]
-pub(crate) async fn make_user(form: Form<UserForm>, _cookies: &CookieJar<'_>, globals: &State<AuthState>) -> Response {
+pub(crate) async fn make_user(form: Form<UserForm>, mut credentials: Connection<Credentials>, auth: &State<AuthState>) -> Response {
+	auth.run_cleanups();
+	
 	let form = form.into_inner();
+	let username = form.username;
+	let password = form.password;
+	let logins = &auth.logins;
 
-	let promise = match globals.logins.add_user(form.username, form.password) {
+	if !logins.is_valid_username(&username)
+	{
+		return make_response!(BadRequest, "Username is not valid".into())
+	}
+	if !logins.is_valid_password(&password) {
+		return make_response!(BadRequest, "Password does not fit the requirements".into())
+	}
+
+	match sqlx::query("SELECT Username FROM PasswordUsers WHERE Username = ?")
+		.bind(username.clone())
+		.fetch_optional(&mut *credentials).await {
+			Ok(Some(_)) => return make_response!(BadRequest, "Username already in use".into()),
+			Ok(None) => {}
+			Err(e) => {
+				default_error!(
+					e,
+					"querying credentials db"
+				);
+				return make_response!(BUG)
+			}
+		};
+	
+	let _ = if let Some(x) = logins.reserve_username(username.clone()) {
+		x
+	} else {
+		return make_response!(BadRequest, "Username already in use".into())
+	};
+
+	let PasswordHash {hash, salt} = match logins.hash_password(password) {
 		Ok(x) => x,
-		Err(e) => return match e {
-			UserCreationError::ArgonError(e) => {
-				default_error!(e, "generating password hash");
-				make_response!(BUG)
-			},
-			UserCreationError::PasswordHasWhitespace => make_response!(BadRequest, "Password must not contain whitespace"),
-			UserCreationError::UsernameInUse => make_response!(BadRequest, "Username already in use"),
-			UserCreationError::BadPassword => make_response!(BadRequest, "Password is not strong enough"),
-			UserCreationError::BadUsername => make_response!(BadRequest, "Username is not alphanumeric or too short or too long")
-		}
-	};
-
-	promise.finalize();
-
-	make_response!(Ok, "Sign up successful")
-}
-
-/// Tries to delete the user that is currently logged in
-#[rocket::post("/delete_my_account")]
-pub(crate) async fn delete_user(cookies: &CookieJar<'_>, globals: &State<AuthState>) -> Response {
-	let session_id = match check_session_id!(globals.sessions, cookies) {
-		Some(x) => x,
-		None => missing_session!()
-	};
-
-	let username = match globals.sessions.get_session_owner(&session_id) {
-		Some(username) => username,
-		None => {
-			error!("Session-ID was valid but not associated with a user!");
+		Err(e) => {
+			default_error!(
+				e,
+				"hashing password"
+			);
 			return make_response!(BUG)
 		}
 	};
 
-	let promise = match globals.logins.delete_user(username.clone()) {
-		Some(x) => x,
-		None => return make_response!(BadRequest, "User does not exist")
-	};
+	match sqlx::query("INSERT INTO PasswordUsers (Username, Salt, Hash) VALUES (?, ?, ?)")
+		.bind(username.clone())
+		.bind(salt)
+		.bind(hash)
+		.execute(&mut *credentials).await
+	{
+		Ok(_) => {}
+		Err(e) => {
+			default_error!(
+				e,
+				"inserting user: {username} into database"
+			);
+			return make_response!(BUG)
+		}
+	}
 
-	promise.finalize();
-	make_response!(Ok, "User deleted successfully")
+	make_response!(Ok, session_id_to_string(auth.sessions.create_session(username)))
 }
+
+// /// Tries to delete the user that is currently logged in
+// #[rocket::post("/delete_my_account")]
+// pub(crate) async fn delete_user(cookies: &CookieJar<'_>, globals: &State<AuthState>) -> Response {
+// 	let session_id = match check_session_id!(globals.sessions, cookies) {
+// 		Some(x) => x,
+// 		None => missing_session!()
+// 	};
+
+// 	let username = match globals.sessions.get_session_owner(&session_id) {
+// 		Some(username) => username,
+// 		None => {
+// 			error!("Session-ID was valid but not associated with a user!");
+// 			return make_response!(BUG)
+// 		}
+// 	};
+
+// 	let promise = match globals.logins.delete_user(username.clone()) {
+// 		Some(x) => x,
+// 		None => return make_response!(BadRequest, "User does not exist")
+// 	};
+
+// 	promise.finalize();
+// 	make_response!(Ok, "User deleted successfully")
+// }

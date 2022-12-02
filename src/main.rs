@@ -6,8 +6,10 @@
 extern crate mangle_rust_utils;
 extern crate rocket;
 
+use std::collections::{BTreeMap};
 use std::fs::read_to_string;
 
+use once_cell::sync::OnceCell;
 use rocket::{catchers};
 use rocket::shield::{Hsts, Shield, XssFilter, Referrer};
 
@@ -16,11 +18,14 @@ use rocket::serde::Deserialize;
 use rocket_cors::CorsOptions;
 use simple_logger::formatters::default_format;
 
-use apps::auth::{get_session_with_password, make_user, delete_user};
+use apps::auth::{get_session_with_password, make_user};
 use mangle_detached_console::{ConsoleServer, send_message, ConsoleSendError};
 use clap::Command;
 
+use rocket_db_pools::Database;
+
 mod apps;
+mod ws;
 
 mod log {
 	use simple_logger::prelude::*;
@@ -36,20 +41,28 @@ mod log {
 
 use log::LOG;
 
+use crate::ws::WsServer;
+
+const BOLA_DB_NAME: &str = "bola_data";
+
+static DATABASE_CONFIGS: OnceCell<BTreeMap<String, rocket::figment::value::Value>> = OnceCell::new();
+
 
 #[derive(Deserialize, Clone)]
 #[serde(crate = "rocket::serde")]
 struct AppConfig {
 	log_path: String,
-	max_session_duration: u64,
-	login_timeout: u64,
+	max_session_duration: u32,
+	login_timeout: u32,
 	max_fails: u8,
 	salt_len: u8,
 	min_username_len: u8,
 	max_username_len: u8,
-	cleanup_delay: u32,
 	password_regex: String,
 	failed_logins_path: String,
+	cleanup_interval: u32,
+	password_hash_length: u8,
+	bola_ws_port: u16
 }
 
 
@@ -142,8 +155,12 @@ async fn main() {
 		.mount("/api", rocket::routes![
 			get_session_with_password,
 			make_user,
-			delete_user,
-			apps::blog::get_blogs
+			// delete_user,
+		])
+		.mount("/api/bola", rocket::routes![
+			apps::blog::get_blogs,
+			apps::bola::get_tournament,
+			apps::bola::win_tournament
 		])
 		.register("/", catchers![not_found, internal_error, forbidden])
 		.attach(AdHoc::config::<AppConfig>())
@@ -170,9 +187,8 @@ async fn main() {
 			let state = apps::auth::make_auth_state(rocket.state::<AppConfig>().unwrap());
 			rocket.manage(state)
 		}))
-		.attach(AdHoc::on_liftoff("Log On Liftoff", |_| Box::pin(async {
-			warn!("Server started successfully");
-		})))
+		.attach(apps::bola::BolaData::init())
+		.attach(apps::auth::Credentials::init())
 		.attach(Shield::default()
 			.enable(Hsts::default())
 			.enable(XssFilter::default())
@@ -191,11 +207,42 @@ async fn main() {
 				)
 			}.to_cors(),
 			"setting up CORS"
-		));
+		))
+		.attach(AdHoc::on_liftoff("Log On Liftoff", |_| Box::pin(async {
+			warn!("Server started successfully");
+		})));
 
 	let ignited = unwrap_result_or_default_error!(
 		built.ignite().await,
 		"igniting rocket"
+	);
+
+	let db_config = unwrap_option_or_msg!(
+		unwrap_result_or_default_error!(
+			ignited
+				.figment()
+				.find_value("databases"),
+			"reading database config from config file"
+		).into_dict(),
+		"No database path in config"
+	);
+	
+	if !db_config.contains_key("bola_data") {
+		error!("bola_data database path not found in config");
+		bad_exit!()
+	}
+	
+	if !db_config.contains_key("credentials") {
+		error!("credentials database path not found in config");
+		bad_exit!()
+	}
+
+	let _ = DATABASE_CONFIGS.set(db_config);
+
+	let app_config = ignited.state::<AppConfig>().unwrap();
+	let bola_ws_server = unwrap_result_or_default_error!(
+		WsServer::bind(app_config.bola_ws_port, apps::bola::accept_ws_stream).await,
+		"starting Bola Websocket server"
 	);
 
 	let mut server = unwrap_result_or_default_error!(
@@ -264,7 +311,8 @@ async fn main() {
 					}
 				}
 			}
-		} => {},
+		} => {}
+		_ = bola_ws_server.start() => {}
 	};
 
 	if let Some(mut event) = final_event {

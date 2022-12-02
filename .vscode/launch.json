@@ -7,15 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'mangle_web_engine'",
+            "name": "Debug executable 'mangle-api'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=mangle_web_engine",
-                    "--package=mangle_web_engine"
+                    "--bin=mangle-api",
+                    "--package=mangle-api"
                 ],
                 "filter": {
-                    "name": "mangle_web_engine",
+                    "name": "mangle-api",
                     "kind": "bin"
                 }
             },
@@ -25,16 +25,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'mangle_web_engine'",
+            "name": "Debug unit tests in executable 'mangle-api'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=mangle_web_engine",
-                    "--package=mangle_web_engine"
+                    "--bin=mangle-api",
+                    "--package=mangle-api"
                 ],
                 "filter": {
-                    "name": "mangle_web_engine",
+                    "name": "mangle-api",
                     "kind": "bin"
                 }
             },
