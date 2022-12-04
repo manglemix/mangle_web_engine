@@ -8,6 +8,8 @@ use mangle_rust_utils::default_error;
 
 mod singletons;
 
+use rocket_db_pools::sqlx::error::DatabaseError;
+use rocket_db_pools::sqlx::sqlite::SqliteError;
 use singletons::{Logins, Sessions};
 pub use singletons::{FAILED_LOGINS, SessionID};
 use crate::{log::*, AppConfig};
@@ -28,35 +30,41 @@ pub struct AuthenticatedUser {
 	pub username: String
 }
 
+const SESSION_HEADER_NAME: &str = "Session-Key";
+
 
 #[async_trait]
 impl<'r> FromRequest<'r> for AuthenticatedUser {
     type Error = ();
 
     async fn from_request(request: &'r rocket::Request<'_>) -> rocket::request::Outcome<Self,Self::Error> {
-		let mut iter = request.headers().get("Session-Key");
+		let mut iter = request.headers().get(SESSION_HEADER_NAME);
 
         let session_id = if let Some(x) = iter.next() {
 			if let Ok(x) = TryInto::<SessionID>::try_into(x.chars().collect::<Vec<char>>()) {
 				x
 			} else {
+				request.local_cache(|| format!("{SESSION_HEADER_NAME} header is not an array of chars"));
 				return Outcome::Failure((Status::BadRequest, ()))
 			}
 		} else {
+			request.local_cache(|| format!("{SESSION_HEADER_NAME} header is empty"));
 			return Outcome::Failure((Status::BadRequest, ()))
 		};
 
 		if iter.next().is_some() {
+			request.local_cache(|| format!("{SESSION_HEADER_NAME} header contains multiple items"));
 			return Outcome::Failure((Status::BadRequest, ()))
 		}
 
-		let sessions: &Sessions = request.rocket().state().unwrap();
+		let auth: &AuthState = request.rocket().state().unwrap();
 
-		if let Some(username) = sessions.get_session_owner(&session_id) {
+		if let Some(username) = auth.sessions.get_session_owner(&session_id) {
 			Outcome::Success(Self {
 				username
 			})
 		} else {
+			request.local_cache(|| format!("{SESSION_HEADER_NAME} header value is either invalid or expired"));
 			Outcome::Failure((Status::Unauthorized, ()))
 		}
     }
@@ -117,8 +125,12 @@ pub(crate) async fn get_session_with_password(form: Form<UserForm>, mut credenti
 	let username = form.username;
 	let logins = &auth.logins;
 	
-	if logins.is_user_locked_out(&username) {
-		return make_response!(Status::Forbidden, "Locked out temporarily".into())
+	if let Some(remaining_time) = logins.is_user_locked_out(&username) {
+		return make_response!(Status::Forbidden, format!("Locked out temporarily for {} secs", remaining_time.as_secs()))
+	}
+
+	if auth.sessions.has_session(&username) {
+		return make_response!(Status::AlreadyReported, "Session already given".into())
 	}
 
 	let password = form.password;
@@ -141,7 +153,10 @@ pub(crate) async fn get_session_with_password(form: Form<UserForm>, mut credenti
 	let hash: Vec<u8> = row.get_unchecked("Hash");
 
 	match logins.verify_password(&password, salt.as_slice(), hash.as_slice()) {
-		Ok(true) => make_response!(Ok, session_id_to_string(auth.sessions.create_session(username))),
+		Ok(true) => {
+			logins.mark_succesful_login(&username);
+			make_response!(Ok, session_id_to_string(auth.sessions.create_session(username)))
+		},
 		Ok(false) => {
 			logins.mark_failed_login(username);
 			make_response!(Status::Unauthorized, "".into())
@@ -167,27 +182,26 @@ pub(crate) async fn make_user(form: Form<UserForm>, mut credentials: Connection<
 	let password = form.password;
 	let logins = &auth.logins;
 
-	if !logins.is_valid_username(&username)
-	{
+	if !logins.is_valid_username(&username) {
 		return make_response!(BadRequest, "Username is not valid".into())
 	}
 	if !logins.is_valid_password(&password) {
 		return make_response!(BadRequest, "Password does not fit the requirements".into())
 	}
 
-	match sqlx::query("SELECT Username FROM PasswordUsers WHERE Username = ?")
-		.bind(username.clone())
-		.fetch_optional(&mut *credentials).await {
-			Ok(Some(_)) => return make_response!(BadRequest, "Username already in use".into()),
-			Ok(None) => {}
-			Err(e) => {
-				default_error!(
-					e,
-					"querying credentials db"
-				);
-				return make_response!(BUG)
-			}
-		};
+	// match sqlx::query("SELECT Username FROM PasswordUsers WHERE Username = ?")
+	// 	.bind(username.clone())
+	// 	.fetch_optional(&mut *credentials).await {
+	// 		Ok(Some(_)) => return make_response!(BadRequest, "Username already in use".into()),
+	// 		Ok(None) => {}
+	// 		Err(e) => {
+	// 			default_error!(
+	// 				e,
+	// 				"querying credentials db"
+	// 			);
+	// 			return make_response!(BUG)
+	// 		}
+	// 	};
 	
 	let _ = if let Some(x) = logins.reserve_username(username.clone()) {
 		x
@@ -213,13 +227,38 @@ pub(crate) async fn make_user(form: Form<UserForm>, mut credentials: Connection<
 		.execute(&mut *credentials).await
 	{
 		Ok(_) => {}
-		Err(e) => {
-			default_error!(
-				e,
-				"inserting user: {username} into database"
-			);
-			return make_response!(BUG)
-		}
+		Err(e) => return match e.as_database_error() {
+            Some(e) => {
+                let e: &SqliteError = e.downcast_ref();
+
+                let string;
+                let code = match e.code().unwrap() {
+                    std::borrow::Cow::Borrowed(x) => x,
+                    std::borrow::Cow::Owned(x) => {
+                        string = x;
+                        string.as_str()
+                    }
+                };
+
+                match code {
+                    "1555" => (Status::BadRequest, "Username is already in use".into()),
+                    _ => {
+                        default_error!(
+                            e,
+                            "inserting into PasswordUsers"
+                        );
+                        (Status::InternalServerError, crate::apps::BUG_MESSAGE.into())
+                    }
+                }
+            }
+            None => {
+                default_error!(
+                    e,
+                    "inserting into PasswordUsers"
+                );
+                (Status::InternalServerError, crate::apps::BUG_MESSAGE.into())
+            }
+        }
 	}
 
 	make_response!(Ok, session_id_to_string(auth.sessions.create_session(username)))

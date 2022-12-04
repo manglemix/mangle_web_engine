@@ -8,8 +8,10 @@ extern crate rocket;
 
 use std::collections::{BTreeMap};
 use std::fs::read_to_string;
+use std::time::Duration;
 
 use once_cell::sync::OnceCell;
+use rocket::http::Status;
 use rocket::{catchers};
 use rocket::shield::{Hsts, Shield, XssFilter, Referrer};
 
@@ -62,27 +64,33 @@ struct AppConfig {
 	failed_logins_path: String,
 	cleanup_interval: u32,
 	password_hash_length: u8,
-	bola_ws_port: u16
+	bola_ws_port: u16,
+	ws_ping_interval: u32
 }
 
 
-#[rocket::catch(404)]
-async fn not_found() -> String {
-	"Not found".into()
+#[rocket::catch(default)]
+fn default_catcher(status: Status, request: &rocket::Request) -> String {
+	let pre_written_body = request.local_cache(String::new);
+	
+	if !pre_written_body.is_empty() {
+		return pre_written_body.clone()
+	}
+
+	if status == Status::NotFound {
+		"Not found. Usually a syntax issue".into()
+	} else if status == Status::Forbidden {
+		"The request performed is forbidden".into()
+	} else if status == Status::InternalServerError {
+		"The server has faced a bug on our end".into()
+	} else if status == Status::Unauthorized {
+		"Client needs to reauthenticate".into()
+	} else if status == Status::BadRequest {
+		"There was an issue in the request".into()
+	} else {
+		format!("Error code: {status}")
+	}
 }
-
-
-#[rocket::catch(403)]
-async fn forbidden() -> String {
-	"Forbidden".into()
-}
-
-
-#[rocket::catch(500)]
-async fn internal_error() -> String {
-	"Internal Error".into()
-}
-
 
 #[rocket::main]
 async fn main() {
@@ -160,9 +168,10 @@ async fn main() {
 		.mount("/api/bola", rocket::routes![
 			apps::blog::get_blogs,
 			apps::bola::get_tournament,
-			apps::bola::win_tournament
+			apps::bola::win_tournament,
+			apps::bola::add_leaderboard_entry
 		])
-		.register("/", catchers![not_found, internal_error, forbidden])
+		.register("/", catchers![default_catcher])
 		.attach(AdHoc::config::<AppConfig>())
 		.attach(rocket_async_compression::Compression::fairing())
 		.attach(AdHoc::on_ignite("Attach logger", |rocket| async {
@@ -240,6 +249,10 @@ async fn main() {
 	let _ = DATABASE_CONFIGS.set(db_config);
 
 	let app_config = ignited.state::<AppConfig>().unwrap();
+
+	ws::PING_INTERVAL.set(Duration::from_secs(app_config.ws_ping_interval as u64))
+		.expect("Could not set PING_INTERVAL");
+
 	let bola_ws_server = unwrap_result_or_default_error!(
 		WsServer::bind(app_config.bola_ws_port, apps::bola::accept_ws_stream).await,
 		"starting Bola Websocket server"

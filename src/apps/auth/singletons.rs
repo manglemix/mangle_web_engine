@@ -153,25 +153,41 @@ impl Logins {
 		}
 	}
 
-	pub fn is_user_locked_out(&self, username: &String) -> bool {
+	pub fn is_user_locked_out(&self, username: &String) -> Option<Duration> {
 		if let Some(attempt) = self.failed_logins.read().unwrap().get(username) {
-			attempt.running_count >= self.max_fails && attempt.time.elapsed() < self.lockout_time
+			let elapsed_time = attempt.time.elapsed();
+
+			if attempt.running_count >= self.max_fails && elapsed_time < self.lockout_time {
+				Some(self.lockout_time - elapsed_time)
+			} else {
+				None
+			}
 		} else {
-			false
+			None
 		}
 	}
 
 	pub fn mark_failed_login(&self, username: String) {
 		let mut writer = self.failed_logins.write().unwrap();
+
 		let attempt = match writer.remove(&username) {
 			Some(mut attempt) => {
-				attempt.running_count += 1;
+				if attempt.running_count >= self.max_fails {
+					attempt.running_count = 1;
+				} else {
+					attempt.running_count += 1;
+				}
 				attempt.time = Instant::now();
 				attempt
 			}
 			None => FailedLoginAttempt { running_count: 1, time: Instant::now() }
 		};
+
 		writer.insert(username, attempt);
+	}
+
+	pub fn mark_succesful_login(&self, username: &String) {
+		self.failed_logins.write().unwrap().remove(username);
 	}
 
 	pub fn reserve_username(&self, username: String) -> Option<UsernameReservation> {
@@ -258,6 +274,10 @@ impl Sessions {
 			max_session_duration,
 			last_cleanup_time: RwLock::new(Instant::now())
 		}
+	}
+
+	pub fn has_session(&self, username: &String) -> bool {
+		self.user_session_map.read().unwrap().contains_left(username)
 	}
 
 	/// Create a new session for the given user
