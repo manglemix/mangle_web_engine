@@ -9,6 +9,7 @@ use rand::{CryptoRng, Rng, RngCore, thread_rng};
 use rand::distributions::Alphanumeric;
 use regex::Regex;
 use std::sync::{Mutex, RwLock};
+use rustrict::CensorStr;
 
 use bimap::BiMap;
 
@@ -98,6 +99,15 @@ pub struct Sessions {
 	pub(crate) max_session_duration: Duration,
 	cleanup_interval: Duration,
 	last_cleanup_time: RwLock<Instant>
+}
+
+
+pub enum UsernameError {
+	ContainsWhitespace,
+	Inappropriate,
+	TooShort,
+	TooLong,
+	IsNotAlphanumeric
 }
 
 
@@ -200,15 +210,27 @@ impl Logins {
 		Some(UsernameReservation { logins: self, username })
 	}
 
-	pub fn is_valid_username(&self, username: &String) -> bool {
-		!username.chars().any(char::is_whitespace) && 
-		username.len() < self.max_username_len as usize && 
-		username.len() > self.min_username_len as usize && 
-		username.chars().all(char::is_alphanumeric)
+	pub fn is_valid_username(&self, username: &String) -> Result<(), UsernameError> {
+		if username.chars().any(char::is_whitespace) {
+			return Err(UsernameError::ContainsWhitespace)
+		}
+		if username.len() < self.min_username_len as usize {
+			return Err(UsernameError::TooShort)
+		}
+		if username.len() > self.max_username_len as usize {
+			return Err(UsernameError::TooLong)
+		}
+		if !username.chars().all(char::is_alphanumeric) {
+			return Err(UsernameError::IsNotAlphanumeric)
+		}
+		if username.is_inappropriate() {
+			return Err(UsernameError::Inappropriate)
+		}
+		return Ok(())
 	}
 
 	pub fn is_valid_password(&self, password: &String) -> bool {
-		!password.chars().any(char::is_whitespace) && self.password_regex.is_match(password.as_str())
+		self.password_regex.is_match(password.as_str())
 	}
 
 	pub fn hash_password(&self, password: String) -> Result<PasswordHash, ArgonError> {

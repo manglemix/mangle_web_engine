@@ -582,6 +582,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "doc-comment"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fea41bba32d969b513997752735605054bc0dfa92b4c56bf1189f2e174be7a10"
+
+[[package]]
 name = "dotenv"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1178,6 +1184,7 @@ dependencies = [
  "rocket_cors",
  "rocket_db_pools",
  "rust-argon2",
+ "rustrict",
  "simple-logger",
  "tokio-tungstenite",
 ]
@@ -1771,6 +1778,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustc-hash"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
+
+[[package]]
 name = "rustc_version"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1790,6 +1803,22 @@ dependencies = [
  "ring",
  "sct",
  "webpki",
+]
+
+[[package]]
+name = "rustrict"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "294846357ffbadaaa82996006626376f97b6327a3990da95458bbcb7c9f2e116"
+dependencies = [
+ "bitflags",
+ "doc-comment",
+ "itertools",
+ "lazy_static",
+ "rustc-hash",
+ "strsim",
+ "unicode-normalization",
+ "unicode_categories",
 ]
 
 [[package]]

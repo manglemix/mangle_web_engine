@@ -14,7 +14,7 @@ use singletons::{Logins, Sessions};
 pub use singletons::{FAILED_LOGINS, SessionID};
 use crate::{log::*, AppConfig};
 
-use self::singletons::{session_id_to_string, PasswordHash};
+use self::singletons::{session_id_to_string, PasswordHash, UsernameError};
 
 use super::*;
 
@@ -182,26 +182,22 @@ pub(crate) async fn make_user(form: Form<UserForm>, mut credentials: Connection<
 	let password = form.password;
 	let logins = &auth.logins;
 
-	if !logins.is_valid_username(&username) {
-		return make_response!(BadRequest, "Username is not valid".into())
+	match logins.is_valid_username(&username) {
+		Ok(()) => {}
+		Err(e) => return make_response!(
+			BadRequest,
+			match e {
+				UsernameError::ContainsWhitespace => "Username contains whitespace",
+				UsernameError::Inappropriate => "Username is inappropriate",
+				UsernameError::TooShort => "Username is too short",
+				UsernameError::TooLong => "Username is too long",
+				UsernameError::IsNotAlphanumeric => "Username is not alphanumeric",
+			}.into()
+		),
 	}
 	if !logins.is_valid_password(&password) {
 		return make_response!(BadRequest, "Password does not fit the requirements".into())
 	}
-
-	// match sqlx::query("SELECT Username FROM PasswordUsers WHERE Username = ?")
-	// 	.bind(username.clone())
-	// 	.fetch_optional(&mut *credentials).await {
-	// 		Ok(Some(_)) => return make_response!(BadRequest, "Username already in use".into()),
-	// 		Ok(None) => {}
-	// 		Err(e) => {
-	// 			default_error!(
-	// 				e,
-	// 				"querying credentials db"
-	// 			);
-	// 			return make_response!(BUG)
-	// 		}
-	// 	};
 	
 	let _ = if let Some(x) = logins.reserve_username(username.clone()) {
 		x
