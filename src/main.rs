@@ -28,11 +28,12 @@ use rocket_db_pools::Database;
 
 mod apps;
 mod ws;
+// mod webrtc;
 
 mod log {
 	use simple_logger::prelude::*;
 
-	declare_logger!([pub] LOG);
+	pub static LOG: Logger = Logger::new();
 	define_error!(crate::log::LOG, trace, export);
 	define_info!(crate::log::LOG, export);
 	define_warn!(crate::log::LOG, export);
@@ -42,6 +43,7 @@ mod log {
 
 
 use log::LOG;
+use tokio_tungstenite::tungstenite::http::{Response, StatusCode};
 
 use crate::ws::WsServer;
 
@@ -64,7 +66,7 @@ struct AppConfig {
 	failed_logins_path: String,
 	cleanup_interval: u32,
 	password_hash_length: u8,
-	bola_ws_port: u16,
+	ws_port: u16,
 	ws_ping_interval: u32
 }
 
@@ -157,7 +159,7 @@ async fn main() {
 		}
     }
 	
-	LOG.attach_stderr(default_format, vec![], true);
+	LOG.attach_stderr(default_format, true);
 
 	let built = rocket::build()
 		.mount("/api", rocket::routes![
@@ -181,12 +183,12 @@ async fn main() {
 
 			unwrap_result_or_default_error!(
 				apps::auth::FAILED_LOGINS
-					.attach_log_file(config.failed_logins_path.as_str(), default_format, vec![], true),
+					.attach_log_file(config.failed_logins_path.as_str(), default_format, true),
 				"opening the failed logins file"
 			);
 
 			unwrap_result_or_default_error!(
-				LOG.attach_log_file(config.log_path.as_str(), default_format, vec![], true),
+				LOG.attach_log_file(config.log_path.as_str(), default_format, true),
 				"opening the log file"
 			);
 
@@ -253,12 +255,25 @@ async fn main() {
 	ws::PING_INTERVAL.set(Duration::from_secs(app_config.ws_ping_interval as u64))
 		.expect("Could not set PING_INTERVAL");
 
-	let bola_ws_server = unwrap_result_or_default_error!(
-		WsServer::bind(app_config.bola_ws_port, apps::bola::accept_ws_stream).await,
+	let ws_server = unwrap_result_or_default_error!(
+		WsServer::bind(
+			app_config.ws_port,
+			|req, response| {
+				match req.uri().path() {
+					"/api/bola/leaderboards" => {}
+					_ => {
+						let mut response = Response::new(Some("No WS endpoint at the given uri".into()));
+						*response.status_mut() = StatusCode::NOT_FOUND;
+						return Err(response)
+					}
+				}
+				Ok((response, apps::bola::accept_ws_stream))
+			}
+		).await,
 		"starting Bola Websocket server"
 	);
 
-	let mut server = unwrap_result_or_default_error!(
+	let mut console_server = unwrap_result_or_default_error!(
 		ConsoleServer::bind(pipe_addr.as_os_str()),
 		"starting console server"
 	);
@@ -274,7 +289,7 @@ async fn main() {
 		}
 		() = async {
 			loop {
-				let mut event = match server.accept().await {
+				let mut event = match console_server.accept().await {
 					Ok(x) => x,
 					Err(e) => {
 						default_error!(
@@ -325,7 +340,7 @@ async fn main() {
 				}
 			}
 		} => {}
-		_ = bola_ws_server.start() => {}
+		_ = ws_server.start() => {}
 	};
 
 	if let Some(mut event) = final_event {

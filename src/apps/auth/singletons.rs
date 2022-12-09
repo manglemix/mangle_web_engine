@@ -8,14 +8,13 @@ use argon2::{Config as ArgonConfig, Error as ArgonError, hash_raw, verify_raw};
 use rand::{CryptoRng, Rng, RngCore, thread_rng};
 use rand::distributions::Alphanumeric;
 use regex::Regex;
+use simple_logger::Logger;
 use std::sync::{Mutex, RwLock};
 use rustrict::CensorStr;
 
 use bimap::BiMap;
 
-use simple_logger::declare_logger;
-
-declare_logger!([pub] FAILED_LOGINS);
+pub static FAILED_LOGINS: Logger = Logger::new();
 
 
 struct FailedLoginAttempt {

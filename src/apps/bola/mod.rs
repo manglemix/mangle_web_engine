@@ -2,12 +2,12 @@ use std::str::FromStr;
 use std::time::{UNIX_EPOCH};
 use once_cell::sync::{Lazy};
 use rand::{SeedableRng, rngs::StdRng, RngCore};
+use rocket::form::prelude::ErrorKind;
 use rocket::serde::json::to_string;
 use rocket::{async_trait};
-use rocket::form::FromForm;
+use rocket::form::{FromFormField, Errors, Error};
 use rocket::futures::{StreamExt, SinkExt};
 use rocket::http::Status;
-use rocket::request::{FromRequest, Outcome};
 use rocket::serde::Serialize;
 use rocket_db_pools::sqlx::error::DatabaseError;
 use rocket_db_pools::sqlx::sqlite::SqliteError;
@@ -28,51 +28,27 @@ pub struct BolaData(sqlx::SqlitePool);
 const DIVISOR: u32 = 3600 * 24 * 7;
 const WEEK_OFFSET: u32 = 2761;
 
-// #[derive(FromForm)]
-// #[field(validate = range(0..4))]
+const MAX_DIFFICULTY: u8 = 3;
 pub struct Difficulty(u8);
 
 
-// #[async_trait]
-// impl<'r> FromRequest<'r> for Difficulty {
-//     type Error = ();
+#[async_trait]
+impl<'r> FromFormField<'r> for Difficulty {
+    fn from_value(field:rocket::form::ValueField<'r>) -> rocket::form::Result<'r,Self> {
+        let raw_value = field.value.parse()?;
 
-//     async fn from_request(request: &'r rocket::Request<'_>) -> rocket::request::Outcome<Self,Self::Error> {
-//         match request.query_value::<u8>("difficulty") {
-//             Some(Ok(n)) => Outcome::Success(Self(n)),
-//             Some(Err(e)) => {
-// 				request.local_cache(|| format!("difficulty param is not a byte"));
-//                 Outcome::Failure((Status::BadRequest, ()))
-//             }
-//             None => {
-// 				request.local_cache(|| format!("difficulty param is not set"));
-//                 Outcome::Failure((Status::BadRequest, ()))
-//             }
-//         }
-//     }
-// }
+        if raw_value > MAX_DIFFICULTY || raw_value == 0 {
+            return Err(Errors::from(vec![Error {
+                name: Some(field.name.into()),
+                value: Some(field.value.into()),
+                kind: ErrorKind::OutOfRange{ start: Some(0), end: Some(MAX_DIFFICULTY as isize) },
+                entity: rocket::form::prelude::Entity::Field
+            }]))
+        }
 
-
-// #[async_trait]
-// impl<'r> FromForm<'r> for Difficulty {
-//     type Context = ();
-
-//     fn init(opts:rocket::form::Options) -> Self::Context {
-//         ()
-//     }
-
-//     fn push_value(ctxt: &mut Self::Context,field:rocket::form::ValueField<'r>) {
-        
-//     }
-
-//     async fn push_data(ctxt: &mut Self::Context,field:rocket::form::DataField<'r,'_>) {
-        
-//     }
-
-//     fn finalize(ctxt:Self::Context) -> rocket::form::Result<'r,Self> {
-        
-//     }
-// }
+        Ok(Self(raw_value))
+    }
+}
 
 
 fn get_tournament_week() -> u32 {
@@ -192,7 +168,9 @@ async fn serialize_leaderboard() -> Option<String> {
 
 
 #[rocket::post("/leaderboard/endless?<difficulty>&<levels>")]
-pub async fn add_leaderboard_entry(difficulty: u8, levels: u8, user: AuthenticatedUser, mut bola_data: Connection<BolaData>) -> Response {
+pub async fn add_leaderboard_entry(difficulty: Difficulty, levels: u8, user: AuthenticatedUser, mut bola_data: Connection<BolaData>) -> Response {
+    let difficulty = difficulty.0;
+
     match sqlx::query("INSERT INTO EndlessLeaderboard (Username, Difficulty, Levels) VALUES (?, ?, ?)")
         .bind(user.username.clone())
         .bind(difficulty)

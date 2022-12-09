@@ -2,7 +2,7 @@ use std::{io::Error, sync::{Arc}, mem::replace, ops::{DerefMut, Deref}, time::Du
 
 use once_cell::sync::OnceCell;
 use rocket::{tokio::{net::{TcpStream, TcpListener}, task::JoinHandle, spawn, time::sleep, sync::Mutex}, futures::SinkExt};
-use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
+use tokio_tungstenite::{WebSocketStream, accept_hdr_async, tungstenite::{Message, handshake::server::{Callback, Request, Response, ErrorResponse}}};
 
 use crate::log::*;
 
@@ -12,20 +12,43 @@ pub type WebSocket = WebSocketStream<TcpStream>;
 
 pub struct WsServer {
     listener: TcpListener,
-    handler: fn(WebSocket)
+    verifier: CallbackFn
 }
 
+
+type CallbackFn = fn(&Request, Response) -> Result<(Response, fn(WebSocket)), ErrorResponse>;
+
+
 impl WsServer {
-    pub async fn bind(port: u16, handler: fn(WebSocket)) -> Result<Self, Error> {
+    pub async fn bind(port: u16, verifier: CallbackFn) -> Result<Self, Error> {
         Ok(
             Self {
                 listener: TcpListener::bind(format!("0.0.0.0:{port}")).await?,
-                handler
+                verifier
             }
         )
     }
 
     pub async fn start(&self) -> ! {
+        struct WsCallback<'a> {
+            callback_fn: CallbackFn,
+            handler: &'a mut Option<fn(WebSocket)>
+        }
+
+        impl<'a> Callback for WsCallback<'a> {
+            fn on_request(
+                self,
+                request: &Request,
+                response: Response,
+            ) -> Result<Response, ErrorResponse> {
+                (self.callback_fn)(request, response)
+                    .map(|ok| {
+                        *self.handler = Some(ok.1);
+                        ok.0
+                    })
+            }
+        }
+
         loop {
             let stream = match self.listener.accept().await {
                 Ok((x, _)) => x,
@@ -35,7 +58,11 @@ impl WsServer {
                 }
             };
 
-            let stream = match accept_async(stream).await {
+            let mut handler = None;
+            let stream = match accept_hdr_async(stream, WsCallback{
+                callback_fn: self.verifier,
+                handler: &mut handler
+            }).await {
                 Ok(x) => x,
                 Err(e) => {
                     info!("Error {e:?} while upgrading TCP Stream to WebSocket");
@@ -43,8 +70,9 @@ impl WsServer {
                 }
             };
 
-
-            (self.handler)(stream);
+            if let Some(handler) = handler {
+                (handler)(stream);
+            }
         }
     }
 }
