@@ -168,7 +168,7 @@ async fn serialize_leaderboard() -> Option<String> {
 
 
 #[rocket::post("/leaderboard/endless?<difficulty>&<levels>")]
-pub async fn add_leaderboard_entry(difficulty: Difficulty, levels: u8, user: AuthenticatedUser, mut bola_data: Connection<BolaData>) -> Response {
+pub async fn add_leaderboard_entry(difficulty: Difficulty, levels: u16, user: AuthenticatedUser, mut bola_data: Connection<BolaData>) -> Response {
     let difficulty = difficulty.0;
 
     match sqlx::query("INSERT INTO EndlessLeaderboard (Username, Difficulty, Levels) VALUES (?, ?, ?)")
@@ -263,7 +263,7 @@ static STREAMS: Lazy<WsList> = Lazy::new(WsList::new);
 struct LeaderboardEntry {
     username: String,
     difficulty: u8,
-    levels: u8
+    levels: u16
 }
 
 
