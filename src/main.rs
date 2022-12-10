@@ -165,10 +165,10 @@ async fn main() {
 		.mount("/api", rocket::routes![
 			get_session_with_password,
 			make_user,
+			apps::blog::get_blogs,
 			// delete_user,
 		])
 		.mount("/api/bola", rocket::routes![
-			apps::blog::get_blogs,
 			apps::bola::get_tournament,
 			apps::bola::win_tournament,
 			apps::bola::add_leaderboard_entry
