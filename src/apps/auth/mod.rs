@@ -38,6 +38,7 @@ impl<'r> FromRequest<'r> for AuthenticatedUser {
     type Error = ();
 
     async fn from_request(request: &'r rocket::Request<'_>) -> rocket::request::Outcome<Self,Self::Error> {
+		// TODO Add client ip check
 		let mut iter = request.headers().get(SESSION_HEADER_NAME);
 
         let session_id = if let Some(x) = iter.next() {
@@ -109,27 +110,27 @@ pub(crate) fn make_auth_state(config: &AppConfig) -> AuthState {
 
 
 #[derive(FromForm)]
-pub struct UserForm {
-	username: String,
-	password: String
+pub struct UserForm<'a> {
+	username: &'a str,
+	password: &'a str
 }
 
 /// Try to start a session with a username and password
 ///
 /// If the user has already opened one and it has not expired, it will be returned
 #[rocket::post("/login", data = "<form>")]
-pub(crate) async fn get_session_with_password(form: Form<UserForm>, mut credentials: Connection<Credentials>, auth: &State<AuthState>) -> Response {
+pub(crate) async fn get_session_with_password<'a>(form: Form<UserForm<'a>>, mut credentials: Connection<Credentials>, auth: &State<AuthState>) -> Response {
 	auth.run_cleanups();
 
 	let form = form.into_inner();
 	let username = form.username;
 	let logins = &auth.logins;
 	
-	if let Some(remaining_time) = logins.is_user_locked_out(&username) {
+	if let Some(remaining_time) = logins.is_user_locked_out(username) {
 		return make_response!(Status::Forbidden, format!("Locked out temporarily for {} secs", remaining_time.as_secs()))
 	}
 
-	if auth.sessions.has_session(&username) {
+	if auth.sessions.has_session(username) {
 		return make_response!(Status::AlreadyReported, "Session already given".into())
 	}
 
@@ -152,13 +153,13 @@ pub(crate) async fn get_session_with_password(form: Form<UserForm>, mut credenti
 	let salt: Vec<u8> = row.get_unchecked("Salt");
 	let hash: Vec<u8> = row.get_unchecked("Hash");
 
-	match logins.verify_password(&password, salt.as_slice(), hash.as_slice()) {
+	match logins.verify_password(password, salt.as_slice(), hash.as_slice()) {
 		Ok(true) => {
-			logins.mark_succesful_login(&username);
-			make_response!(Ok, session_id_to_string(auth.sessions.create_session(username)))
+			logins.mark_succesful_login(username);
+			make_response!(Ok, session_id_to_string(auth.sessions.create_session(username.into())))
 		},
 		Ok(false) => {
-			logins.mark_failed_login(username);
+			logins.mark_failed_login(username.into());
 			make_response!(Status::Unauthorized, "".into())
 		}
 		Err(e) => {
@@ -174,7 +175,7 @@ pub(crate) async fn get_session_with_password(form: Form<UserForm>, mut credenti
 
 /// Tries to create a new user, granted the creating user has appropriate abilities
 #[rocket::post("/sign_up", data = "<form>")]
-pub(crate) async fn make_user(form: Form<UserForm>, mut credentials: Connection<Credentials>, auth: &State<AuthState>) -> Response {
+pub(crate) async fn make_user<'a>(form: Form<UserForm<'a>>, mut credentials: Connection<Credentials>, auth: &State<AuthState>) -> Response {
 	auth.run_cleanups();
 	
 	let form = form.into_inner();
@@ -195,11 +196,11 @@ pub(crate) async fn make_user(form: Form<UserForm>, mut credentials: Connection<
 			}.into()
 		),
 	}
-	if !logins.is_valid_password(&password) {
+	if !logins.is_valid_password(password) {
 		return make_response!(BadRequest, "Password does not fit the requirements".into())
 	}
 	
-	let _ = if let Some(x) = logins.reserve_username(username.clone()) {
+	let _ = if let Some(x) = logins.reserve_username(username.into()) {
 		x
 	} else {
 		return make_response!(BadRequest, "Username already in use".into())
@@ -257,7 +258,7 @@ pub(crate) async fn make_user(form: Form<UserForm>, mut credentials: Connection<
         }
 	}
 
-	make_response!(Ok, session_id_to_string(auth.sessions.create_session(username)))
+	make_response!(Ok, session_id_to_string(auth.sessions.create_session(username.into())))
 }
 
 // /// Tries to delete the user that is currently logged in

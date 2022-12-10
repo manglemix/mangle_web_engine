@@ -162,7 +162,7 @@ impl Logins {
 		}
 	}
 
-	pub fn is_user_locked_out(&self, username: &String) -> Option<Duration> {
+	pub fn is_user_locked_out(&self, username: &str) -> Option<Duration> {
 		if let Some(attempt) = self.failed_logins.read().unwrap().get(username) {
 			let elapsed_time = attempt.time.elapsed();
 
@@ -195,7 +195,7 @@ impl Logins {
 		writer.insert(username, attempt);
 	}
 
-	pub fn mark_succesful_login(&self, username: &String) {
+	pub fn mark_succesful_login(&self, username: &str) {
 		self.failed_logins.write().unwrap().remove(username);
 	}
 
@@ -209,7 +209,7 @@ impl Logins {
 		Some(UsernameReservation { logins: self, username })
 	}
 
-	pub fn is_valid_username(&self, username: &String) -> Result<(), UsernameError> {
+	pub fn is_valid_username(&self, username: &str) -> Result<(), UsernameError> {
 		if username.chars().any(char::is_whitespace) {
 			return Err(UsernameError::ContainsWhitespace)
 		}
@@ -228,11 +228,11 @@ impl Logins {
 		return Ok(())
 	}
 
-	pub fn is_valid_password(&self, password: &String) -> bool {
-		self.password_regex.is_match(password.as_str())
+	pub fn is_valid_password(&self, password: &str) -> bool {
+		self.password_regex.is_match(password)
 	}
 
-	pub fn hash_password(&self, password: String) -> Result<PasswordHash, ArgonError> {
+	pub fn hash_password(&self, password: &str) -> Result<PasswordHash, ArgonError> {
 		let salt = thread_rng()
 			.sample_iter(rand::distributions::Standard)
 			.take(self.salt_len as usize)
@@ -246,7 +246,7 @@ impl Logins {
 		)
 	}
 
-	pub fn verify_password(&self, password: &String, true_salt: &[u8], true_hash: &[u8]) -> Result<bool, ArgonError> {
+	pub fn verify_password(&self, password: &str, true_salt: &[u8], true_hash: &[u8]) -> Result<bool, ArgonError> {
 		Ok(
 			verify_raw(password.as_bytes(), true_salt, true_hash, &self.argon2_config)?
 		)
@@ -297,7 +297,7 @@ impl Sessions {
 		}
 	}
 
-	pub fn has_session(&self, username: &String) -> bool {
+	pub fn has_session(&self, username: &str) -> bool {
 		self.user_session_map.read().unwrap().contains_left(username)
 	}
 

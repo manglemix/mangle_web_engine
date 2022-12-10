@@ -4,8 +4,8 @@ use once_cell::sync::{Lazy};
 use rand::{SeedableRng, rngs::StdRng, RngCore};
 use rocket::form::prelude::ErrorKind;
 use rocket::serde::json::to_string;
-use rocket::{async_trait};
-use rocket::form::{FromFormField, Errors, Error};
+use rocket::{async_trait, FromForm};
+use rocket::form::{FromFormField, Errors, Error, Form};
 use rocket::futures::{StreamExt, SinkExt};
 use rocket::http::Status;
 use rocket::serde::Serialize;
@@ -159,7 +159,8 @@ async fn serialize_leaderboard() -> Option<String> {
         entries.push(LeaderboardEntry {
             username: row.get_unchecked("Username"),
             difficulty: row.get_unchecked("Difficulty"),
-            levels: row.get_unchecked("Levels")
+            levels: row.get_unchecked("Levels"),
+            time: row.get_unchecked("Time")
         })
     }
     
@@ -167,27 +168,29 @@ async fn serialize_leaderboard() -> Option<String> {
 }
 
 
-#[rocket::post("/leaderboard/endless?<difficulty>&<levels>")]
-pub async fn add_leaderboard_entry(difficulty: Difficulty, levels: u16, user: AuthenticatedUser, mut bola_data: Connection<BolaData>) -> Response {
-    let difficulty = difficulty.0;
+#[derive(FromForm)]
+pub struct LeaderboardEntryRequest {
+    difficulty: Difficulty,
+    levels: u16
+}
 
-    match sqlx::query("INSERT INTO EndlessLeaderboard (Username, Difficulty, Levels) VALUES (?, ?, ?)")
+
+#[rocket::post("/leaderboard/endless", data = "<data>")]
+pub async fn add_leaderboard_entry(data: Form<LeaderboardEntryRequest>, user: AuthenticatedUser, mut bola_data: Connection<BolaData>) -> Response {
+    let data = data;
+    let difficulty = data.difficulty.0;
+    let levels = data.levels;
+    let current_time = UNIX_EPOCH.elapsed().unwrap().as_secs_f64().round();
+
+    match sqlx::query("INSERT INTO EndlessLeaderboard (Username, Difficulty, Levels, Time) VALUES (?, ?, ?, ?)")
         .bind(user.username.clone())
         .bind(difficulty)
         .bind(levels)
+        .bind(current_time)
         .execute(&mut *bola_data)
         .await
     {
-        Ok(_) => match serialize_leaderboard().await {
-            Some(x) => {
-                STREAMS.send_all(Message::Text(x)).await;
-                make_response!(Ok, "Leaderboard entry was recorded".into())
-            }
-            None => {
-                error!("Could not serialize leaderboard");
-                make_response!(BUG)
-            }
-        }
+        Ok(_) => {}
         Err(e) => match e.as_database_error() {
             Some(e) => {
                 let e: &SqliteError = e.downcast_ref();
@@ -202,8 +205,9 @@ pub async fn add_leaderboard_entry(difficulty: Difficulty, levels: u16, user: Au
                 };
 
                 match code {
-                    "2067" => match sqlx::query("UPDATE EndlessLeaderboard SET Levels = ? WHERE Username = ? AND Difficulty = ? AND Levels < ?")
-                        .bind(levels)
+                    "2067" => match sqlx::query("UPDATE EndlessLeaderboard SET Levels = ?, Time = ? WHERE Username = ? AND Difficulty = ? AND Levels < ?")
+                        .bind(data.levels)
+                        .bind(current_time)
                         .bind(user.username.clone())
                         .bind(difficulty)
                         .bind(levels)
@@ -211,27 +215,17 @@ pub async fn add_leaderboard_entry(difficulty: Difficulty, levels: u16, user: Au
                         .await
                         {
                             Ok(r) => if r.rows_affected() == 0 {
-                                    make_response!(Ok, "Leaderboard entry was already recorded".into())
-                                } else {
-                                    if r.rows_affected() > 1 {
-                                        error!("Multiple rows affected bug when adding leaderboard entry");
-                                        return make_response!(BUG)
-                                    }
-                                    STREAMS.send_all(Message::Text(to_string(
-                                        &LeaderboardEntry {
-                                            username: user.username,
-                                            difficulty,
-                                            levels
-                                        }
-                                    ).unwrap())).await;
-                                    make_response!(Status::Ok, "Leaderboard entry was recorded".into())
+                                    return make_response!(Ok, "Leaderboard entry was already recorded".into())
+                                } else if r.rows_affected() > 1 {
+                                    error!("Multiple rows affected bug when adding leaderboard entry");
+                                    return make_response!(BUG)
                                 }
                             Err(e) => {
                                 default_error!(
                                     e,
                                     "inserting into TournamentWinners"
                                 );
-                                make_response!(BUG)
+                                return make_response!(BUG)
                             }
                         }
                     _ => {
@@ -239,7 +233,7 @@ pub async fn add_leaderboard_entry(difficulty: Difficulty, levels: u16, user: Au
                             e,
                             "inserting into TournamentWinners"
                         );
-                        make_response!(BUG)
+                        return make_response!(BUG)
                     }
                 }
             }
@@ -248,10 +242,21 @@ pub async fn add_leaderboard_entry(difficulty: Difficulty, levels: u16, user: Au
                     e,
                     "inserting into TournamentWinners"
                 );
-                make_response!(BUG)
+                return make_response!(BUG)
             }
         }
     }
+
+    STREAMS.send_all(Message::Text(to_string(
+        &LeaderboardEntry {
+            username: user.username,
+            difficulty,
+            levels,
+            time: current_time
+        }
+    ).unwrap())).await;
+
+    make_response!(Status::Ok, "Leaderboard entry was recorded".into())
 }
 
 
@@ -263,7 +268,8 @@ static STREAMS: Lazy<WsList> = Lazy::new(WsList::new);
 struct LeaderboardEntry {
     username: String,
     difficulty: u8,
-    levels: u16
+    levels: u16,
+    time: f64
 }
 
 
