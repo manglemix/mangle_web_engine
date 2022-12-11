@@ -332,7 +332,7 @@ impl Sessions {
 		let mut writer = self.user_session_map.write().unwrap();
 		let (username, mut data) = writer.remove_by_left(username)?;
 		
-		if data.renew_count > self.max_renew_count {
+		if data.renew_count >= self.max_renew_count {
 			None
 		} else {
 			data.renew_count += 1;
