@@ -84,7 +84,7 @@ fn default_catcher(status: Status, request: &rocket::Request) -> String {
 	} else if status == Status::Forbidden {
 		"The request performed is forbidden".into()
 	} else if status == Status::InternalServerError {
-		"The server has faced a bug on our end".into()
+		apps::BUG_MESSAGE.into()
 	} else if status == Status::Unauthorized {
 		"Client needs to reauthenticate".into()
 	} else if status == Status::BadRequest {

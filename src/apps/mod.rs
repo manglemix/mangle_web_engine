@@ -5,7 +5,7 @@ pub mod auth;
 pub mod blog;
 pub mod bola;
 
-const BUG_MESSAGE: &str = "We encountered a bug on our end. Please try again later";
+pub const BUG_MESSAGE: &str = "We encountered a bug on our end. Please try again later";
 
 macro_rules! make_response {
 	(NotFound, $reason: expr) => {

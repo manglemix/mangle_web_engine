@@ -130,10 +130,6 @@ pub(crate) async fn get_session_with_password<'a>(form: Form<UserForm<'a>>, mut 
 		return make_response!(Status::Forbidden, format!("Locked out temporarily for {} secs", remaining_time.as_secs()))
 	}
 
-	if auth.sessions.has_session(username) {
-		return make_response!(Status::AlreadyReported, "Session already given".into())
-	}
-
 	let password = form.password;
 
 	let row = match sqlx::query("SELECT Salt, Hash FROM PasswordUsers WHERE Username = ?")

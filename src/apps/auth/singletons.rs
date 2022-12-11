@@ -297,20 +297,14 @@ impl Sessions {
 		}
 	}
 
-	pub fn has_session(&self, username: &str) -> bool {
-		self.user_session_map.read().unwrap().contains_left(username)
-	}
+	// pub fn has_session(&self, username: &str) -> bool {
+	// 	self.user_session_map.read().unwrap().contains_left(username)
+	// }
 
-	/// Create a new session for the given user
-	///
-	/// If the user has already opened a session and it has not expired yet, it will be returned
+	/// Create a new session for the given user, replacing an existing one if it exists
 	///
 	/// Does not check if the user has been authenticated
-	pub fn create_session(&self, mut username: String) -> SessionID {
-		if let Some(x) = self.user_session_map.read().unwrap().get_by_left(&username) {
-			return x.id.clone()
-		}
-
+	pub fn create_session(&self, username: String) -> SessionID {
 		let mut writer = self.user_session_map.write().unwrap();
 		let mut rand_gen = thread_rng();
 		let mut session_id = make_session_id(&mut rand_gen);
@@ -320,12 +314,12 @@ impl Sessions {
 			creation_time: Instant::now()
 		};
 
-		while let Err((_username, _session_data)) = writer.insert_no_overwrite(username, session_data) {
-			session_data = _session_data;
-			username = _username;
+		while writer.contains_right(&session_data) {
 			session_id = make_session_id(&mut rand_gen);
 			session_data.id = session_id.clone();
 		}
+
+		writer.insert(username, session_data);
 
 		session_id
 	}
