@@ -260,7 +260,7 @@ async fn main() {
 			app_config.ws_port,
 			|req, response| {
 				match req.uri().path() {
-					"/ws/bola/leaderboards" => Ok((response, apps::bola::accept_ws_stream)),
+					"/ws/bola/leaderboards" => Ok((response, apps::bola::accept_leaderboard_ws)),
 					_ => {
 						let mut response = Response::new(Some("No WS endpoint at the given uri".into()));
 						*response.status_mut() = StatusCode::NOT_FOUND;

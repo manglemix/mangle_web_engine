@@ -273,7 +273,7 @@ struct LeaderboardEntry {
 }
 
 
-pub fn accept_ws_stream(mut stream: WebSocket) {
+pub fn accept_leaderboard_ws(mut stream: WebSocket) {
     rocket::tokio::spawn(async move {
         let data = if let Some(x) = serialize_leaderboard().await {
             x
