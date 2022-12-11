@@ -223,7 +223,7 @@ pub async fn add_leaderboard_entry(data: Form<LeaderboardEntryRequest>, user: Au
                             Err(e) => {
                                 default_error!(
                                     e,
-                                    "inserting into TournamentWinners"
+                                    "inserting into EndlessLeaderboard"
                                 );
                                 return make_response!(BUG)
                             }
@@ -231,7 +231,7 @@ pub async fn add_leaderboard_entry(data: Form<LeaderboardEntryRequest>, user: Au
                     _ => {
                         default_error!(
                             e,
-                            "inserting into TournamentWinners"
+                            "inserting into EndlessLeaderboard"
                         );
                         return make_response!(BUG)
                     }
@@ -240,7 +240,7 @@ pub async fn add_leaderboard_entry(data: Form<LeaderboardEntryRequest>, user: Au
             None => {
                 default_error!(
                     e,
-                    "inserting into TournamentWinners"
+                    "inserting into EndlessLeaderboard"
                 );
                 return make_response!(BUG)
             }

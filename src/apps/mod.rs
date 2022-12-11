@@ -8,9 +8,6 @@ pub mod bola;
 const BUG_MESSAGE: &str = "We encountered a bug on our end. Please try again later";
 
 macro_rules! make_response {
-	(ServerError, $reason: expr) => {
-		make_response!(rocket::http::Status::InternalServerError, $reason)
-	};
 	(NotFound, $reason: expr) => {
 		make_response!(rocket::http::Status::NotFound, $reason)
 	};
@@ -21,10 +18,10 @@ macro_rules! make_response {
 		make_response!(rocket::http::Status::Ok, $reason)
 	};
 	(BUG) => {
-		make_response!(NotFound, $crate::apps::BUG_MESSAGE.to_string())
+		make_response!(rocket::http::Status::InternalServerError, $crate::apps::BUG_MESSAGE.to_string())
 	};
 	(BUG, either) => {
-		make_response!(NotFound, rocket::Either::Left($crate::methods::BUG_MESSAGE))
+		make_response!(rocket::http::Status::InternalServerError, rocket::Either::Left($crate::methods::BUG_MESSAGE))
 	};
     ($code: expr, $reason: expr) => {
 		($code, $reason)
