@@ -46,9 +46,7 @@ use tokio_tungstenite::tungstenite::http::{Response, StatusCode};
 
 use crate::ws::WsServer;
 
-const BOLA_DB_NAME: &str = "bola_data";
-
-static DATABASE_CONFIGS: OnceCell<std::collections::BTreeMap<String, rocket::figment::value::Value>> = OnceCell::new();
+static BOLA_DB_URL: OnceCell<String> = OnceCell::new();
 
 
 #[derive(Deserialize, Clone)]
@@ -173,7 +171,8 @@ async fn main() {
 		.mount("/api/bola", rocket::routes![
 			apps::bola::get_tournament,
 			apps::bola::win_tournament,
-			apps::bola::add_leaderboard_entry
+			apps::bola::add_leaderboard_entry,
+			apps::bola::get_account
 		])
 		.register("/", catchers![default_catcher])
 		.attach(AdHoc::config::<AppConfig>())
@@ -250,7 +249,16 @@ async fn main() {
 		bad_exit!()
 	}
 
-	let _ = DATABASE_CONFIGS.set(db_config);
+	let _ = BOLA_DB_URL.set(
+		db_config
+			.get("bola_data")
+			.unwrap()
+			.clone()
+			.find("url")
+			.unwrap()
+			.into_string()
+			.unwrap()
+	);
 
 	let app_config = ignited.state::<AppConfig>().unwrap();
 

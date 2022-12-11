@@ -18,8 +18,8 @@ use super::auth::AuthenticatedUser;
 use rocket_db_pools::{Database, Connection};
 use rocket_db_pools::sqlx::{self, Row, ConnectOptions};
 
-use super::{unwrap_result_or_log, Response, make_response};
-use crate::{log::*, DATABASE_CONFIGS, BOLA_DB_NAME};
+use super::{unwrap_result_or_log, Response, make_response, unwrap_option_or_log};
+use crate::{log::*, BOLA_DB_URL};
 
 #[derive(Database)]
 #[database("bola_data")]
@@ -29,6 +29,7 @@ const DIVISOR: u32 = 3600 * 24 * 7;
 const WEEK_OFFSET: u32 = 2761;
 
 const MAX_DIFFICULTY: u8 = 3;
+/// Starts from 1 and ends at 3 inclusive
 pub struct Difficulty(u8);
 
 
@@ -86,85 +87,91 @@ pub async fn win_tournament(week: u32, user: AuthenticatedUser, mut bola_data: C
         .execute(&mut *bola_data)
         .await
     {
-        Ok(_) => (Status::Ok, "Win was recorded".into()),
-        Err(e) => match e.as_database_error() {
-            Some(e) => {
-                let e: &SqliteError = e.downcast_ref();
+        Ok(_) => make_response!(Ok, "Win was recorded".into()),
+        Err(e) => {
+            let e = unwrap_option_or_log!(
+                e.as_database_error();
+                ("inserting into TournamentWinners")
+                return make_response!(BUG)
+            );
 
-                let string;
-                let code = match e.code().unwrap() {
-                    std::borrow::Cow::Borrowed(x) => x,
-                    std::borrow::Cow::Owned(x) => {
-                        string = x;
-                        string.as_str()
-                    }
-                };
+            let e: &SqliteError = e.downcast_ref();
 
-                match code {
-                    "2067" => (Status::BadRequest, "Win is already recorded".into()),
-                    _ => {
-                        default_error!(
-                            e,
-                            "inserting into TournamentWinners"
-                        );
-                        (Status::InternalServerError, crate::apps::BUG_MESSAGE.into())
-                    }
+            let string;
+            let code = match e.code().unwrap() {
+                std::borrow::Cow::Borrowed(x) => x,
+                std::borrow::Cow::Owned(x) => {
+                    string = x;
+                    string.as_str()
                 }
-            }
-            None => {
-                default_error!(
-                    e,
-                    "inserting into TournamentWinners"
-                );
-                (Status::InternalServerError, crate::apps::BUG_MESSAGE.into())
+            };
+
+            match code {
+                "2067" => make_response!(BadRequest, "Win is already recorded".into()),
+                _ => {
+                    default_error!(
+                        e,
+                        "inserting into TournamentWinners"
+                    );
+                    make_response!(BUG)
+                }
             }
         }
     }
 }
 
 
-async fn serialize_leaderboard() -> Option<String> {
-    let bola_db_url = DATABASE_CONFIGS
-        .get()
-        .unwrap()
-        .get(crate::BOLA_DB_NAME)
-        .unwrap()
-        .clone()
-        .find("url")
-        .unwrap()
-        .into_string()
-        .unwrap();
-    
-    let mut db = unwrap_result_or_log!(
-        sqlx::sqlite::SqliteConnectOptions::from_str(format!("sqlite://{bola_db_url}").as_str())
-            .unwrap()
-            .connect()
+#[derive(Serialize, Default)]
+#[serde(crate = "rocket::serde")]
+struct AccountData {
+    easy_max_level: u16,
+    normal_max_level: u16,
+    hard_max_level: u16,
+    tournament_wins: u16
+}
+
+
+#[rocket::get("/account")]
+pub async fn get_account(user: AuthenticatedUser, mut bola_data: Connection<BolaData>) -> Response {
+    let mut data = AccountData::default();
+
+    {
+        let mut fetch = sqlx::query("SELECT Difficulty, Levels FROM EndlessLeaderboard WHERE Username = ?")
+            .bind(user.username.clone())
+            .fetch(&mut *bola_data);
+
+        while let Some(result) = fetch.next().await {
+            let row = unwrap_result_or_log!(
+                result;
+                ("reading row in EndlessLeaderboard")
+                continue
+            );
+
+            let level: u16 = row.get_unchecked("Levels");
+
+            match row.get_unchecked::<u8, _>("Difficulty") {
+                1 => data.easy_max_level = level,
+                2 => data.normal_max_level  = level,
+                3 => data.hard_max_level = level,
+                x => {
+                    error!("Unknown difficulty: {x} found while getting account data for {}", user.username);
+                }
+            }
+        }
+    }
+
+    let row = unwrap_result_or_log!(
+        sqlx::query("SELECT COUNT(*) FROM TournamentWinners WHERE Username = ?")
+            .bind(user.username.clone())
+            .fetch_one(&mut *bola_data)
             .await;
-        ("connecting to {}", BOLA_DB_NAME)
-        return None
+            ("counting tournament wins for {}", user.username)
+            return make_response!(BUG)
     );
 
-    let mut fetch = sqlx::query("SELECT * FROM EndlessLeaderboard")
-        .fetch(&mut db);
-    
-    let mut entries = Vec::new();
-    
-    while let Some(result) = fetch.next().await {
-        let row = unwrap_result_or_log!(
-            result;
-            ("reading row in EndlessLeaderboard")
-            continue
-        );
+    data.tournament_wins = row.get_unchecked("COUNT(*)");
 
-        entries.push(LeaderboardEntry {
-            username: row.get_unchecked("Username"),
-            difficulty: row.get_unchecked("Difficulty"),
-            levels: row.get_unchecked("Levels"),
-            time: row.get_unchecked("Time")
-        })
-    }
-    
-    Some(to_string(&entries).unwrap())
+    make_response!(Ok, to_string(&data).unwrap())
 }
 
 
@@ -257,6 +264,40 @@ pub async fn add_leaderboard_entry(data: Form<LeaderboardEntryRequest>, user: Au
     ).unwrap())).await;
 
     make_response!(Status::Ok, "Leaderboard entry was recorded".into())
+}
+
+
+async fn serialize_leaderboard() -> Option<String> {
+    let mut db = unwrap_result_or_log!(
+        sqlx::sqlite::SqliteConnectOptions::from_str(format!("sqlite://{}", BOLA_DB_URL.get().unwrap()).as_str())
+            .unwrap()
+            .connect()
+            .await;
+        ("connecting to bola_data")
+        return None
+    );
+
+    let mut fetch = sqlx::query("SELECT * FROM EndlessLeaderboard")
+        .fetch(&mut db);
+    
+    let mut entries = Vec::new();
+    
+    while let Some(result) = fetch.next().await {
+        let row = unwrap_result_or_log!(
+            result;
+            ("reading row in EndlessLeaderboard")
+            continue
+        );
+
+        entries.push(LeaderboardEntry {
+            username: row.get_unchecked("Username"),
+            difficulty: row.get_unchecked("Difficulty"),
+            levels: row.get_unchecked("Levels"),
+            time: row.get_unchecked("Time")
+        })
+    }
+    
+    Some(to_string(&entries).unwrap())
 }
 
 
