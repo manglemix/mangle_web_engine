@@ -6,7 +6,6 @@
 extern crate mangle_rust_utils;
 extern crate rocket;
 
-use std::collections::{BTreeMap};
 use std::fs::read_to_string;
 use std::time::Duration;
 
@@ -20,7 +19,7 @@ use rocket::serde::Deserialize;
 use rocket_cors::CorsOptions;
 use simple_logger::formatters::default_format;
 
-use apps::auth::{get_session_with_password, make_user};
+use apps::auth::{get_session_with_password, make_user, remove_session};
 use mangle_detached_console::{ConsoleServer, send_message, ConsoleSendError};
 use clap::Command;
 
@@ -49,7 +48,7 @@ use crate::ws::WsServer;
 
 const BOLA_DB_NAME: &str = "bola_data";
 
-static DATABASE_CONFIGS: OnceCell<BTreeMap<String, rocket::figment::value::Value>> = OnceCell::new();
+static DATABASE_CONFIGS: OnceCell<std::collections::BTreeMap<String, rocket::figment::value::Value>> = OnceCell::new();
 
 
 #[derive(Deserialize, Clone)]
@@ -165,6 +164,7 @@ async fn main() {
 		.mount("/api", rocket::routes![
 			get_session_with_password,
 			make_user,
+			remove_session,
 			apps::blog::get_blogs,
 			// delete_user,
 		])
@@ -332,7 +332,7 @@ async fn main() {
 						final_event = Some(event);
 						warn!("Stop command issued");
 						return
-					},
+					}
 					(cmd, _) => {
 						error!("Received the following command from client console: {cmd}");
 					}

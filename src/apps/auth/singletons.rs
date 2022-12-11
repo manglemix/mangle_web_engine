@@ -324,6 +324,10 @@ impl Sessions {
 		session_id
 	}
 
+	pub fn remove_session(&self, username: &str) {
+		self.user_session_map.write().unwrap().remove_by_left(username);
+	}
+
 	/// Remove expired sessions
 	pub fn prune_expired(&self) {
 		if self.last_cleanup_time.read().unwrap().elapsed() < self.cleanup_interval {

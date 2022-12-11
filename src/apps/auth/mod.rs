@@ -169,6 +169,17 @@ pub(crate) async fn get_session_with_password<'a>(form: Form<UserForm<'a>>, mut 
 }
 
 
+/// Try to start a session with a username and password
+///
+/// If the user has already opened one and it has not expired, it will be returned
+#[rocket::post("/logout")]
+pub(crate) async fn remove_session<'a>(user: AuthenticatedUser, auth: &State<AuthState>) -> Response {
+	auth.run_cleanups();
+	auth.sessions.remove_session(&user.username);
+	make_response!(Ok, "Sucessfully logged out".to_string())
+}
+
+
 /// Tries to create a new user, granted the creating user has appropriate abilities
 #[rocket::post("/sign_up", data = "<form>")]
 pub(crate) async fn make_user<'a>(form: Form<UserForm<'a>>, mut credentials: Connection<Credentials>, auth: &State<AuthState>) -> Response {
