@@ -19,7 +19,7 @@ use rocket::serde::Deserialize;
 use rocket_cors::CorsOptions;
 use simple_logger::formatters::default_format;
 
-use apps::auth::{get_session_with_password, make_user, remove_session};
+use apps::auth::{get_session_with_password, make_user, remove_session, renew_session};
 use mangle_detached_console::{ConsoleServer, send_message, ConsoleSendError};
 use clap::Command;
 
@@ -66,7 +66,8 @@ struct AppConfig {
 	cleanup_interval: u32,
 	password_hash_length: u8,
 	ws_port: u16,
-	ws_ping_interval: u32
+	ws_ping_interval: u32,
+	max_session_renewals: u8
 }
 
 
@@ -165,6 +166,7 @@ async fn main() {
 			get_session_with_password,
 			make_user,
 			remove_session,
+			renew_session,
 			apps::blog::get_blogs,
 			// delete_user,
 		])

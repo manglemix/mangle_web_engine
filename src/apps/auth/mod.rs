@@ -103,7 +103,8 @@ pub(crate) fn make_auth_state(config: &AppConfig) -> AuthState {
 		),
 		sessions: Sessions::new(
 			Duration::from_secs(config.max_session_duration as u64),
-			Duration::from_secs(config.cleanup_interval as u64)
+			Duration::from_secs(config.cleanup_interval as u64),
+			config.max_session_renewals
 		),
 	}
 }
@@ -169,9 +170,17 @@ pub(crate) async fn get_session_with_password<'a>(form: Form<UserForm<'a>>, mut 
 }
 
 
-/// Try to start a session with a username and password
-///
-/// If the user has already opened one and it has not expired, it will be returned
+#[rocket::post("/renew_session")]
+pub(crate) async fn renew_session<'a>(user: AuthenticatedUser, auth: &State<AuthState>) -> Response {
+	auth.run_cleanups();
+	match auth.sessions.renew_session(&user.username) {
+		Some(x) => make_response!(Ok, x.to_string()),
+		None => make_response!(Forbidden, "Renewal limit reached".to_string())
+	}
+	
+}
+
+
 #[rocket::post("/logout")]
 pub(crate) async fn remove_session<'a>(user: AuthenticatedUser, auth: &State<AuthState>) -> Response {
 	auth.run_cleanups();

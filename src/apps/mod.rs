@@ -14,6 +14,9 @@ macro_rules! make_response {
 	(BadRequest, $reason: expr) => {
 		make_response!(rocket::http::Status::BadRequest, $reason)
 	};
+	(Forbidden, $reason: expr) => {
+		make_response!(rocket::http::Status::Forbidden, $reason)
+	};
 	(Ok, $reason: expr) => {
 		make_response!(rocket::http::Status::Ok, $reason)
 	};

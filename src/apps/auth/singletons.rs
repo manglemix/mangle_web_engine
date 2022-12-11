@@ -48,7 +48,8 @@ pub type SessionID = [char; 32];
 /// Identification of a session
 struct SessionData {
 	id: SessionID,
-	creation_time: Instant
+	creation_time: Instant,
+	renew_count: u8
 }
 
 
@@ -97,7 +98,8 @@ pub struct Sessions {
 	user_session_map: RwLock<BiMap<String, SessionData>>,
 	pub(crate) max_session_duration: Duration,
 	cleanup_interval: Duration,
-	last_cleanup_time: RwLock<Instant>
+	last_cleanup_time: RwLock<Instant>,
+	max_renew_count: u8
 }
 
 
@@ -288,12 +290,13 @@ pub fn session_id_to_string(id: SessionID) -> String {
 
 impl Sessions {
 	/// Creates a Sessions instance that has a separate task that performs occasional cleanups
-	pub fn new(max_session_duration: Duration, cleanup_interval: Duration) -> Self {
+	pub fn new(max_session_duration: Duration, cleanup_interval: Duration, max_renew_count: u8) -> Self {
 		Self {
 			user_session_map: Default::default(),
 			cleanup_interval,
 			max_session_duration,
-			last_cleanup_time: RwLock::new(Instant::now())
+			last_cleanup_time: RwLock::new(Instant::now()),
+			max_renew_count
 		}
 	}
 
@@ -311,7 +314,8 @@ impl Sessions {
 
 		let mut session_data = SessionData {
 			id: session_id.clone(),
-			creation_time: Instant::now()
+			creation_time: Instant::now(),
+			renew_count: 0
 		};
 
 		while writer.contains_right(&session_data) {
@@ -322,6 +326,20 @@ impl Sessions {
 		writer.insert(username, session_data);
 
 		session_id
+	}
+
+	pub fn renew_session(&self, username: &str) -> Option<u8> {
+		let writer = self.user_session_map.write().unwrap();
+		let (username, mut data) = writer.remove_by_left(username)?;
+		
+		if data.renew_count > self.max_renew_count {
+			None
+		} else {
+			data.renew_count += 1;
+			data.creation_time = Instant::now();
+			writer.insert(username, data);
+			Some(self.max_renew_count - data.renew_count)
+		}
 	}
 
 	pub fn remove_session(&self, username: &str) {
