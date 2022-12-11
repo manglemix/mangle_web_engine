@@ -329,7 +329,7 @@ impl Sessions {
 	}
 
 	pub fn renew_session(&self, username: &str) -> Option<u8> {
-		let writer = self.user_session_map.write().unwrap();
+		let mut writer = self.user_session_map.write().unwrap();
 		let (username, mut data) = writer.remove_by_left(username)?;
 		
 		if data.renew_count > self.max_renew_count {
@@ -337,8 +337,9 @@ impl Sessions {
 		} else {
 			data.renew_count += 1;
 			data.creation_time = Instant::now();
+			let renew_count = data.renew_count;
 			writer.insert(username, data);
-			Some(self.max_renew_count - data.renew_count)
+			Some(self.max_renew_count - renew_count)
 		}
 	}
 
