@@ -5,7 +5,7 @@ use rand::{SeedableRng, rngs::StdRng, RngCore};
 use rocket::form::prelude::ErrorKind;
 use rocket::serde::json::to_string;
 use rocket::{async_trait, FromForm};
-use rocket::form::{FromFormField, Errors, Error, Form};
+use rocket::form::{FromFormField, Errors, Error, Form, ValueField};
 use rocket::futures::{StreamExt, SinkExt};
 use rocket::http::Status;
 use rocket::serde::Serialize;
@@ -35,7 +35,7 @@ pub struct Difficulty(u8);
 
 #[async_trait]
 impl<'r> FromFormField<'r> for Difficulty {
-    fn from_value(field:rocket::form::ValueField<'r>) -> rocket::form::Result<'r,Self> {
+    fn from_value(field:ValueField<'r>) -> rocket::form::Result<'r,Self> {
         let raw_value = field.value.parse()?;
 
         if raw_value > MAX_DIFFICULTY || raw_value == 0 {
@@ -61,12 +61,7 @@ fn get_tournament_week() -> u32 {
 pub fn get_tournament() -> String {
     let week = get_tournament_week();
 
-    format!("{{
-    week: {},
-    seed: {},
-    since: {},
-    until: {}
-}}",
+    format!("{{\"week\": {}, \"seed\": {}, \"since\": {}, \"until\": {}}}",
         week,
         StdRng::seed_from_u64(week as u64).next_u32(),
         (week + WEEK_OFFSET) * DIVISOR,
@@ -75,12 +70,36 @@ pub fn get_tournament() -> String {
 }
 
 
-#[rocket::post("/tournament?<week>")]
-pub async fn win_tournament(week: u32, user: AuthenticatedUser, mut bola_data: Connection<BolaData>) -> Response {
-    if week != get_tournament_week() {
-        return (Status::BadRequest, "The given week is not the current week".into())
+pub struct WinTournamentForm {
+    week: u32
+}
+
+
+impl<'r> FromFormField<'r> for WinTournamentForm {
+    fn from_value(field:ValueField<'r>) -> rocket::form::Result<'r,Self> {
+        let raw_value = field.value.parse()?;
+
+        let current_week = get_tournament_week();
+        if raw_value != current_week {
+            return Err(Errors::from(vec![Error {
+                name: Some(field.name.into()),
+                value: Some(field.value.into()),
+                kind: ErrorKind::OutOfRange{ start: Some(current_week as isize), end: Some(current_week as isize) },
+                entity: rocket::form::prelude::Entity::Field
+            }]))
+        }
+
+        Ok(Self{
+            week: raw_value
+        })
     }
-    
+}
+
+
+#[rocket::post("/tournament", data = "<data>")]
+pub async fn win_tournament(data: Form<WinTournamentForm>, user: AuthenticatedUser, mut bola_data: Connection<BolaData>) -> Response {
+    let week = data.week;
+
     match sqlx::query("INSERT INTO TournamentWinners (Username, Tournament) VALUES (?, ?)")
         .bind(user.username)
         .bind(week)
@@ -127,7 +146,8 @@ struct AccountData {
     easy_max_level: u16,
     normal_max_level: u16,
     hard_max_level: u16,
-    tournament_wins: u16
+    tournament_wins: u16,
+    won_tournament: bool
 }
 
 
@@ -170,6 +190,24 @@ pub async fn get_account(user: AuthenticatedUser, mut bola_data: Connection<Bola
     );
 
     data.tournament_wins = row.get_unchecked("COUNT(*)");
+
+    let row = unwrap_result_or_log!(
+        sqlx::query("SELECT COUNT(*) FROM TournamentWinners WHERE Username = ? AND Tournament = ?")
+            .bind(user.username.clone())
+            .bind(get_tournament_week())
+            .fetch_one(&mut *bola_data)
+            .await;
+            ("counting tournament wins for {}", user.username)
+            return make_response!(BUG)
+    );
+
+    let win_count: u32 = row.get_unchecked("COUNT(*)");
+
+    if win_count > 1 {
+        error!("User: {} has more than one win for this week: {}", user.username, get_tournament_week());
+    }
+
+    data.won_tournament = win_count > 0;
 
     make_response!(Ok, to_string(&data).unwrap())
 }
